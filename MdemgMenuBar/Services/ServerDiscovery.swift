@@ -147,15 +147,34 @@ final class ServerDiscovery {
 
     // MARK: - Static Helpers
 
-    /// Returns the default project directory.
+    /// Returns the default project directory for MDEMG file discovery.
     ///
-    /// Uses the current working directory if available and non-empty,
-    /// otherwise falls back to the user's home directory.
+    /// Search order:
+    /// 1. User preference (if set in UserDefaults "projectDirectory")
+    /// 2. Common MDEMG project locations (~/mdemg)
+    /// 3. Home directory (fallback)
     static func defaultProjectDirectory() -> URL {
-        let cwd = FileManager.default.currentDirectoryPath
-        if !cwd.isEmpty {
-            return URL(fileURLWithPath: cwd)
+        // Check user preference
+        if let pref = UserDefaults.standard.string(forKey: "projectDirectory"),
+           !pref.isEmpty {
+            return URL(fileURLWithPath: pref)
         }
-        return FileManager.default.homeDirectoryForCurrentUser
+
+        let home = FileManager.default.homeDirectoryForCurrentUser
+
+        // Check common MDEMG project locations
+        let candidates = [
+            home.appendingPathComponent("mdemg"),
+        ]
+        for candidate in candidates {
+            let portFile = candidate.appendingPathComponent(".mdemg.port")
+            let pidDir = candidate.appendingPathComponent(".mdemg")
+            if FileManager.default.fileExists(atPath: portFile.path) ||
+               FileManager.default.fileExists(atPath: pidDir.path) {
+                return candidate
+            }
+        }
+
+        return home
     }
 }

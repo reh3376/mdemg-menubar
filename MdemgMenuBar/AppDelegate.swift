@@ -23,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // Configure popover
         let contentView = StatusView().environmentObject(pollingManager)
-        popover.contentSize = NSSize(width: 320, height: 300)
+        popover.contentSize = NSSize(width: 360, height: 420)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: contentView)
         popover.delegate = self

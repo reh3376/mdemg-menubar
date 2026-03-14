@@ -55,6 +55,9 @@ final class PollingManager: ObservableObject {
     @Published var neo4jHealth: Neo4jHealth?
     @Published var embeddingHealthData: EmbeddingHealthResponse?
     @Published var memoryStatsData: MemoryStats?
+    @Published var learningStatsData: LearningStatsResponse?
+    @Published var distributionData: DistributionResponse?
+    @Published var poolMetricsData: PoolMetricsResponse?
     @Published var isPopoverVisible: Bool = false
 
     // MARK: - Configuration
@@ -216,36 +219,36 @@ final class PollingManager: ObservableObject {
             // Step 3: Check uptime from PID file modification time
             state.uptime = discovery.processUptime()
 
-            // Step 4: If process appears running, verify with /healthz
-            if state.isRunning {
-                let healthy = await client.healthCheck()
-                if healthy {
-                    state.healthStatus = .healthy
+            // Step 4: Always try /healthz — the server may be running
+            // even without PID/port files (e.g., started from a different directory)
+            let healthy = await client.healthCheck()
+            if healthy {
+                state.isRunning = true
+                state.healthStatus = .healthy
 
-                    // Bonus: check embedding health for degraded detection
-                    do {
-                        let emb = try await client.embeddingHealth()
-                        state.embeddingProvider = emb.provider
-                        state.embeddingModel = emb.model
-                        if emb.status != "healthy" {
-                            state.healthStatus = .degraded
-                        }
-                    } catch {
+                // Check embedding health for degraded detection
+                do {
+                    let emb = try await client.embeddingHealth()
+                    state.embeddingProvider = emb.provider
+                    state.embeddingModel = emb.model
+                    if emb.status != "healthy" && emb.status != "ok" {
                         state.healthStatus = .degraded
                     }
-
-                    resetBackoff()
-                } else {
+                } catch {
                     state.healthStatus = .degraded
-                    applyBackoff()
                 }
+
+                resetBackoff()
+            } else if state.isRunning {
+                // PID alive but healthz failed
+                state.healthStatus = .degraded
+                applyBackoff()
+            } else if state.pid != nil {
+                // PID file exists but process dead
+                state.healthStatus = .stopped
+                applyBackoff()
             } else {
-                // Process not running
-                if state.pid != nil {
-                    state.healthStatus = .stopped
-                } else {
-                    state.healthStatus = .unknown
-                }
+                state.healthStatus = .unknown
                 applyBackoff()
             }
 
@@ -286,6 +289,24 @@ final class PollingManager: ObservableObject {
             } catch {
                 // Non-fatal
             }
+
+            // Fetch learning stats
+            do {
+                let learning = try await client.learningStats(spaceId: spaceId)
+                self.learningStatsData = learning
+            } catch {}
+
+            // Fetch distribution stats
+            do {
+                let dist = try await client.distributionStats(spaceId: spaceId)
+                self.distributionData = dist
+            } catch {}
+
+            // Fetch pool metrics
+            do {
+                let pool = try await client.poolMetrics()
+                self.poolMetricsData = pool
+            } catch {}
         }
     }
 
