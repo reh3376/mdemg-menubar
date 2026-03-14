@@ -62,7 +62,7 @@ struct StatusView: View {
                     Text("Nodes:")
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text(Formatting.formatNumber(nodes))
+                    Text(Formatting.formatNumber(Int(nodes)))
                         .monospacedDigit()
                 }
             }
@@ -75,9 +75,9 @@ struct StatusView: View {
                     Text("Neo4j:")
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text("running")
-                        .foregroundColor(.green)
-                    Text("(\(neo4j.spaceId))")
+                    Text(neo4j.database.status)
+                        .foregroundColor(neo4j.database.status == "healthy" ? .green : .yellow)
+                    Text("(\(neo4j.database.totalNodes) nodes)")
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -132,7 +132,7 @@ struct StatusView: View {
             // Last updated
             HStack {
                 Spacer()
-                Text("Updated \(Formatting.timeAgo(from: state.lastUpdated))")
+                Text("Updated \(Formatting.timeAgo(from: state.lastUpdated ?? Date()))")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
@@ -141,7 +141,7 @@ struct StatusView: View {
         .frame(width: 320, height: 300)
     }
 
-    private func statusText(_ status: HealthStatus) -> String {
+    private func statusText(_ status: ServerState.HealthStatus) -> String {
         switch status {
         case .healthy: "Running"
         case .degraded: "Degraded"
@@ -150,7 +150,7 @@ struct StatusView: View {
         }
     }
 
-    private func statusColor(_ status: HealthStatus) -> Color {
+    private func statusColor(_ status: ServerState.HealthStatus) -> Color {
         switch status {
         case .healthy: .green
         case .degraded: .yellow

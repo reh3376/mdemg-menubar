@@ -30,7 +30,7 @@ struct PreferencesView: View {
 
             Section("General") {
                 Toggle("Launch at Login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { _, newValue in
+                    .onChange(of: launchAtLogin) { newValue in
                         setLaunchAtLogin(newValue)
                     }
             }

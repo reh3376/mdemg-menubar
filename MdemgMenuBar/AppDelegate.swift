@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Combine
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
@@ -61,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: - Icon state
 
-    private func updateIcon(for status: HealthStatus) {
+    private func updateIcon(for status: ServerState.HealthStatus) {
         guard let button = statusItem?.button else { return }
         let image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "MDEMG Status")
         image?.isTemplate = false

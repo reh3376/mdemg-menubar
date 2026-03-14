@@ -19,9 +19,12 @@ final class FormattingTests: XCTestCase {
     }
 
     func testFormatNumber() {
-        XCTAssertEqual(Formatting.formatNumber(34416), "34,416")
+        // Use the system's number formatter to get locale-appropriate expectations
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        XCTAssertEqual(Formatting.formatNumber(34416), formatter.string(from: 34416)!)
         XCTAssertEqual(Formatting.formatNumber(0), "0")
-        XCTAssertEqual(Formatting.formatNumber(1000000), "1,000,000")
+        XCTAssertEqual(Formatting.formatNumber(1000000), formatter.string(from: 1000000)!)
     }
 
     func testFormatPercentage() {
