@@ -16,7 +16,7 @@ clean:
 	rm -rf DerivedData build
 
 run: build
-	open "$$(xcodebuild -scheme MdemgMenuBar -configuration Debug -showBuildSettings | grep -m 1 'BUILT_PRODUCTS_DIR' | awk '{print $$NF}')/MDEMG Menu Bar.app"
+	open "$$(xcodebuild -scheme MdemgMenuBar -configuration Debug -showBuildSettings | grep -m 1 'BUILT_PRODUCTS_DIR' | awk '{print $$NF}')/MdemgMenuBar.app"
 
 setup:
 	@command -v xcodegen >/dev/null 2>&1 || { echo "Installing xcodegen..."; brew install xcodegen; }
