@@ -1,0 +1,40 @@
+name: MdemgMenuBar
+options:
+  bundleIdPrefix: com.reh3376
+  deploymentTarget:
+    macOS: "13.0"
+  xcodeVersion: "15.0"
+
+settings:
+  SWIFT_VERSION: "5.9"
+  MACOSX_DEPLOYMENT_TARGET: "13.0"
+
+targets:
+  MdemgMenuBar:
+    type: application
+    platform: macOS
+    sources:
+      - MdemgMenuBar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reh3376.mdemg-menubar
+        INFOPLIST_FILE: MdemgMenuBar/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MdemgMenuBar/MdemgMenuBar.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        COMBINE_HIDPI_IMAGES: YES
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "-"
+        Release:
+          CODE_SIGN_IDENTITY: "Apple Development"
+
+  MdemgMenuBarTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - MdemgMenuBarTests
+    dependencies:
+      - target: MdemgMenuBar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reh3376.mdemg-menubar-tests

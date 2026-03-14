@@ -1,0 +1,205 @@
+import Foundation
+
+// MARK: - CLI Errors
+
+/// Errors that can occur when executing mdemg CLI commands.
+enum CLIError: LocalizedError {
+    /// The mdemg binary could not be found in any expected location.
+    case binaryNotFound
+    /// The command exited with a non-zero status. The associated string
+    /// contains the stderr (or stdout if stderr is empty) output.
+    case executionFailed(String)
+    /// The command exceeded its time limit.
+    case timeout
+
+    var errorDescription: String? {
+        switch self {
+        case .binaryNotFound:
+            return "mdemg binary not found. Install via: brew install reh3376/mdemg/mdemg"
+        case .executionFailed(let message):
+            return "CLI execution failed: \(message)"
+        case .timeout:
+            return "CLI command timed out"
+        }
+    }
+}
+
+// MARK: - CLIExecutor
+
+/// Executes `mdemg` CLI commands as subprocesses using Foundation's `Process`.
+///
+/// Captures stdout and stderr via pipes and runs process execution on a
+/// background dispatch queue to avoid blocking the main thread.
+final class CLIExecutor {
+
+    /// Absolute path to the mdemg binary.
+    let binaryPath: String
+
+    /// Initialize with an explicit binary path.
+    ///
+    /// If no path is provided, attempts auto-discovery via `findBinary()`.
+    /// Falls back to bare "mdemg" (relying on PATH) if discovery fails.
+    init(binaryPath: String? = nil) {
+        self.binaryPath = binaryPath ?? CLIExecutor.findBinary() ?? "mdemg"
+    }
+
+    // MARK: - Public Commands
+
+    /// Start the MDEMG server.
+    ///
+    /// Runs `mdemg start [--auto-migrate]`.
+    ///
+    /// - Parameter autoMigrate: Include `--auto-migrate` flag. Defaults to true.
+    /// - Returns: The stdout output from the command.
+    func start(autoMigrate: Bool = true) async throws -> String {
+        var args = ["start"]
+        if autoMigrate {
+            args.append("--auto-migrate")
+        }
+        return try await execute(arguments: args)
+    }
+
+    /// Stop the MDEMG server.
+    ///
+    /// Runs `mdemg stop`.
+    ///
+    /// - Returns: The stdout output from the command.
+    func stop() async throws -> String {
+        try await execute(arguments: ["stop"])
+    }
+
+    /// Restart the MDEMG server.
+    ///
+    /// Runs `mdemg restart [--auto-migrate]`.
+    ///
+    /// - Parameter autoMigrate: Include `--auto-migrate` flag. Defaults to true.
+    /// - Returns: The stdout output from the command.
+    func restart(autoMigrate: Bool = true) async throws -> String {
+        var args = ["restart"]
+        if autoMigrate {
+            args.append("--auto-migrate")
+        }
+        return try await execute(arguments: args)
+    }
+
+    // MARK: - Private Execution
+
+    /// Execute the mdemg binary with the given arguments.
+    ///
+    /// Creates a `Process`, sets the executable URL and arguments, captures
+    /// stdout and stderr via `Pipe`, and runs on a background dispatch queue.
+    ///
+    /// - Parameter arguments: The CLI arguments (e.g., `["start", "--auto-migrate"]`).
+    /// - Returns: The stdout output as a trimmed string.
+    /// - Throws: `CLIError.executionFailed` if the process exits with a non-zero code.
+    private func execute(arguments: [String]) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async { [binaryPath] in
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: binaryPath)
+                process.arguments = arguments
+
+                // Inherit the current environment, ensuring Homebrew paths are on PATH
+                var env = ProcessInfo.processInfo.environment
+                if let path = env["PATH"] {
+                    if !path.contains("/opt/homebrew/bin") {
+                        env["PATH"] = "/opt/homebrew/bin:" + path
+                    }
+                }
+                process.environment = env
+
+                let stdoutPipe = Pipe()
+                let stderrPipe = Pipe()
+                process.standardOutput = stdoutPipe
+                process.standardError = stderrPipe
+
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(throwing: CLIError.executionFailed(error.localizedDescription))
+                    return
+                }
+
+                process.waitUntilExit()
+
+                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+
+                let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+                let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+
+                if process.terminationStatus != 0 {
+                    let message = stderr.isEmpty ? stdout : stderr
+                    continuation.resume(
+                        throwing: CLIError.executionFailed(
+                            message.trimmingCharacters(in: .whitespacesAndNewlines)
+                        )
+                    )
+                } else {
+                    continuation.resume(
+                        returning: stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                    )
+                }
+            }
+        }
+    }
+
+    // MARK: - Binary Discovery
+
+    /// Search for the mdemg binary in common installation locations.
+    ///
+    /// Search chain:
+    /// 1. `/opt/homebrew/bin/mdemg` (Apple Silicon Homebrew)
+    /// 2. `/usr/local/bin/mdemg` (Intel Homebrew)
+    /// 3. PATH lookup via `/usr/bin/which mdemg`
+    ///
+    /// - Returns: The absolute path to the binary, or nil if not found.
+    static func findBinary() -> String? {
+        let candidates = [
+            "/opt/homebrew/bin/mdemg",
+            "/usr/local/bin/mdemg",
+        ]
+
+        let fm = FileManager.default
+        for candidate in candidates {
+            if fm.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+
+        // Fallback: use `which` to search PATH
+        return whichMdemg()
+    }
+
+    /// Uses `/usr/bin/which` to locate `mdemg` on PATH.
+    ///
+    /// - Returns: The absolute path if found, or nil.
+    private static func whichMdemg() -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        process.arguments = ["mdemg"]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else { return nil }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let path = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !path.isEmpty else {
+            return nil
+        }
+
+        return path
+    }
+}

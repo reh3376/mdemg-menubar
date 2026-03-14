@@ -1,0 +1,25 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode Project
+        run: xcodegen generate
+
+      - name: Build
+        run: xcodebuild -scheme MdemgMenuBar -configuration Debug build
+
+      - name: Test
+        run: xcodebuild -scheme MdemgMenuBarTests -configuration Debug test
