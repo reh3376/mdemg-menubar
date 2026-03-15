@@ -37,19 +37,20 @@ struct ServerState: Equatable {
 
 // MARK: - PollingManager
 
-/// Manages periodic polling of the MDEMG server for health and statistics.
+/// Manages periodic polling of MDEMG server instances for health and statistics.
 ///
-/// Uses two independent timers:
-/// - **Health timer** (10s base): Always active. Checks PID liveness, port file,
-///   and /healthz. Applies exponential backoff on consecutive failures.
+/// Uses three independent timers:
+/// - **Health timer** (10s base): Always active for the selected instance. Checks PID
+///   liveness, port file, and /healthz. Applies exponential backoff on consecutive failures.
 /// - **Stats timer** (30s base): Only fetches data when `isPopoverVisible` is true
 ///   (i.e., when the user has the popover open and wants to see detailed stats).
+/// - **Background health timer** (30s): Lightweight health checks for non-selected instances.
 ///
 /// All published property updates happen on `@MainActor`.
 @MainActor
 final class PollingManager: ObservableObject {
 
-    // MARK: - Published State
+    // MARK: - Published State (Selected Instance)
 
     @Published var serverState = ServerState.initial
     @Published var readinessData: ReadinessResponse?
@@ -65,6 +66,11 @@ final class PollingManager: ObservableObject {
     @Published var neo4jUptime: TimeInterval?
     @Published var neo4jIsRunning: Bool = false
 
+    // MARK: - Multi-Instance State
+
+    /// Health state for all registered instances, keyed by instance ID.
+    @Published var allInstanceStates: [String: ServerState] = [:]
+
     // MARK: - Configuration
 
     /// The space ID to query for stats. Defaults to user preference or "mdemg-dev".
@@ -73,18 +79,21 @@ final class PollingManager: ObservableObject {
     // MARK: - Dependencies
 
     private(set) var client: MdemgClient
-    let discovery: ServerDiscovery
-    private let cliExecutor: CLIExecutor
+    private(set) var discovery: ServerDiscovery
+    private(set) var cliExecutor: CLIExecutor
+    let instanceStore: InstanceStore
 
     // MARK: - Timer State
 
     private var healthTimer: Timer?
     private var statsTimer: Timer?
+    private var backgroundHealthTimer: Timer?
 
     // MARK: - Polling Intervals
 
     static let baseHealthInterval: TimeInterval = 10.0
     static let baseStatsInterval: TimeInterval = 30.0
+    static let backgroundHealthInterval: TimeInterval = 30.0
     static let maxBackoffInterval: TimeInterval = 60.0
 
     // MARK: - Backoff State
@@ -94,17 +103,29 @@ final class PollingManager: ObservableObject {
 
     // MARK: - Init
 
-    /// Initialize with a server discovery instance and optional preference override.
+    /// Initialize with an instance store. Sets up resources for the selected instance.
     ///
-    /// - Parameters:
-    ///   - discovery: Server discovery for locating the MDEMG instance.
-    ///   - preferenceOverride: Optional user-configured URL string.
-    init(discovery: ServerDiscovery = ServerDiscovery(),
-         preferenceOverride: String? = nil) {
-        self.discovery = discovery
-        let endpoint = discovery.resolveEndpoint(preferenceOverride: preferenceOverride)
-        self.client = MdemgClient(baseURL: endpoint)
-        self.cliExecutor = CLIExecutor()
+    /// - Parameter instanceStore: The shared instance registry.
+    init(instanceStore: InstanceStore) {
+        self.instanceStore = instanceStore
+
+        if let selected = instanceStore.selectedInstance {
+            let disc = ServerDiscovery(
+                projectDirectory: URL(fileURLWithPath: selected.projectDirectory)
+            )
+            self.discovery = disc
+            let endpoint = selected.serverURL
+                .flatMap { URL(string: $0) }
+                ?? disc.resolveEndpoint()
+            self.client = MdemgClient(baseURL: endpoint)
+            self.cliExecutor = CLIExecutor(workingDirectory: selected.projectDirectory)
+            self.spaceId = selected.spaceId
+        } else {
+            self.discovery = ServerDiscovery()
+            let endpoint = discovery.resolveEndpoint()
+            self.client = MdemgClient(baseURL: endpoint)
+            self.cliExecutor = CLIExecutor()
+        }
     }
 
     /// Update the client's base URL (e.g., after user changes preferences).
@@ -112,9 +133,52 @@ final class PollingManager: ObservableObject {
         self.client = MdemgClient(baseURL: url)
     }
 
+    // MARK: - Instance Switching
+
+    /// Switch to a different MDEMG instance.
+    ///
+    /// Recreates the client, discovery, and CLI executor for the new instance.
+    /// Clears all stale stats and triggers an immediate health poll.
+    ///
+    /// - Parameter instance: The instance to switch to.
+    func switchToInstance(_ instance: MdemgInstance) {
+        instanceStore.selectInstance(id: instance.id)
+
+        let disc = ServerDiscovery(
+            projectDirectory: URL(fileURLWithPath: instance.projectDirectory)
+        )
+        self.discovery = disc
+        let endpoint = instance.serverURL
+            .flatMap { URL(string: $0) }
+            ?? disc.resolveEndpoint()
+        self.client = MdemgClient(baseURL: endpoint)
+        self.cliExecutor = CLIExecutor(workingDirectory: instance.projectDirectory)
+        self.spaceId = instance.spaceId
+
+        // Clear stale data from previous instance
+        readinessData = nil
+        neo4jHealth = nil
+        embeddingHealthData = nil
+        memoryStatsData = nil
+        learningStatsData = nil
+        distributionData = nil
+        poolMetricsData = nil
+        configData = nil
+        logLines = []
+
+        // Reset backoff and poll immediately
+        consecutiveFailures = 0
+        currentHealthInterval = Self.baseHealthInterval
+        pollHealth()
+
+        if isPopoverVisible {
+            pollStats()
+        }
+    }
+
     // MARK: - Polling Lifecycle
 
-    /// Start both polling timers.
+    /// Start all polling timers.
     ///
     /// Performs an immediate health poll, then schedules recurring timers.
     func startPolling() {
@@ -126,6 +190,7 @@ final class PollingManager: ObservableObject {
         // Schedule recurring timers
         scheduleHealthTimer()
         scheduleStatsTimer()
+        scheduleBackgroundHealthTimer()
     }
 
     /// Stop all polling timers and invalidate them.
@@ -134,6 +199,8 @@ final class PollingManager: ObservableObject {
         healthTimer = nil
         statsTimer?.invalidate()
         statsTimer = nil
+        backgroundHealthTimer?.invalidate()
+        backgroundHealthTimer = nil
     }
 
     /// Notify the polling manager that popover visibility changed.
@@ -237,7 +304,7 @@ final class PollingManager: ObservableObject {
         NSWorkspace.shared.open(logURL)
     }
 
-    // MARK: - Health Polling
+    // MARK: - Health Polling (Selected Instance)
 
     /// Poll server health: check PID liveness, port file, and /healthz.
     ///
@@ -322,6 +389,50 @@ final class PollingManager: ObservableObject {
             }
 
             self.serverState = state
+
+            // Also update allInstanceStates for the selected instance
+            if let selectedId = instanceStore.selectedInstanceId {
+                allInstanceStates[selectedId] = state
+            }
+        }
+    }
+
+    // MARK: - Background Health Polling (Non-Selected Instances)
+
+    /// Lightweight health check for all non-selected instances.
+    ///
+    /// Only checks `/healthz` — no PID/port/embedding/readiness checks.
+    /// Updates `allInstanceStates` for status dots in the instance picker.
+    private func pollBackgroundInstances() {
+        let selectedId = instanceStore.selectedInstanceId
+        let nonSelected = instanceStore.instances.filter { $0.id != selectedId }
+
+        for instance in nonSelected {
+            Task {
+                let disc = ServerDiscovery(
+                    projectDirectory: URL(fileURLWithPath: instance.projectDirectory)
+                )
+                let endpoint = instance.serverURL
+                    .flatMap { URL(string: $0) }
+                    ?? disc.resolveEndpoint()
+                let bgClient = MdemgClient(baseURL: endpoint)
+
+                var state = ServerState()
+                state.lastUpdated = Date()
+
+                let healthy = await bgClient.healthCheck()
+                if healthy {
+                    state.healthStatus = .healthy
+                    state.isRunning = true
+                } else if let pid = disc.discoverPID(), disc.isProcessAlive(pid: pid) {
+                    state.healthStatus = .degraded
+                    state.isRunning = true
+                } else {
+                    state.healthStatus = .unknown
+                }
+
+                allInstanceStates[instance.id] = state
+            }
         }
     }
 
@@ -497,6 +608,20 @@ final class PollingManager: ObservableObject {
         }
     }
 
+    /// Schedule the background health timer for non-selected instances.
+    private func scheduleBackgroundHealthTimer() {
+        backgroundHealthTimer?.invalidate()
+        backgroundHealthTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.backgroundHealthInterval,
+            repeats: true
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.pollBackgroundInstances()
+            }
+        }
+    }
+
     // MARK: - Backoff Logic
 
     /// Apply exponential backoff after a health check failure.
@@ -524,5 +649,6 @@ final class PollingManager: ObservableObject {
     deinit {
         healthTimer?.invalidate()
         statsTimer?.invalidate()
+        backgroundHealthTimer?.invalidate()
     }
 }

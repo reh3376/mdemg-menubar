@@ -6,7 +6,9 @@ import Combine
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
-    private let pollingManager = PollingManager()
+    private let instanceStore = InstanceStore()
+    private var pollingManager: PollingManager!
+    private var instanceScanner: InstanceScanner!
     private var cancellables = Set<AnyCancellable>()
 
     private lazy var contextMenu: NSMenu = {
@@ -35,6 +37,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
     }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Ensure at least one instance exists for backward compatibility
+        instanceStore.ensureDefaultInstance()
+
+        // Create polling manager with instance store
+        pollingManager = PollingManager(instanceStore: instanceStore)
+
+        // Start auto-discovery scanner
+        instanceScanner = InstanceScanner(instanceStore: instanceStore)
+        instanceScanner.start()
+
         // Create menu bar status item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
@@ -45,8 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
-        // Configure popover
-        let contentView = StatusView().environmentObject(pollingManager)
+        // Configure popover — inject both instanceStore and pollingManager
+        let contentView = StatusView()
+            .environmentObject(pollingManager)
+            .environmentObject(instanceStore)
         popover.contentSize = NSSize(width: 375, height: 460)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: contentView)
@@ -66,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
 
     func applicationWillTerminate(_ notification: Notification) {
         pollingManager.stopPolling()
+        instanceScanner.stop()
     }
 
     // MARK: - Click handling

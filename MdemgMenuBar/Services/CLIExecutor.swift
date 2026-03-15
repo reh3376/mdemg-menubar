@@ -35,12 +35,17 @@ final class CLIExecutor {
     /// Absolute path to the mdemg binary.
     let binaryPath: String
 
-    /// Initialize with an explicit binary path.
+    /// Optional working directory for CLI commands.
+    /// When set, `mdemg start/stop/restart` target this project directory.
+    let workingDirectory: String?
+
+    /// Initialize with an explicit binary path and optional working directory.
     ///
     /// If no path is provided, attempts auto-discovery via `findBinary()`.
     /// Falls back to bare "mdemg" (relying on PATH) if discovery fails.
-    init(binaryPath: String? = nil) {
+    init(binaryPath: String? = nil, workingDirectory: String? = nil) {
         self.binaryPath = binaryPath ?? CLIExecutor.findBinary() ?? "mdemg"
+        self.workingDirectory = workingDirectory
     }
 
     // MARK: - Public Commands
@@ -187,10 +192,15 @@ final class CLIExecutor {
     /// - Throws: `CLIError.executionFailed` if the process exits with a non-zero code.
     private func execute(arguments: [String]) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async { [binaryPath] in
+            DispatchQueue.global(qos: .userInitiated).async { [binaryPath, workingDirectory] in
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: binaryPath)
                 process.arguments = arguments
+
+                // Set working directory so CLI targets the correct project
+                if let wd = workingDirectory {
+                    process.currentDirectoryURL = URL(fileURLWithPath: wd)
+                }
 
                 // Inherit the current environment, ensuring Homebrew paths are on PATH
                 var env = ProcessInfo.processInfo.environment

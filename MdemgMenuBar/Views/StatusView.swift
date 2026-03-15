@@ -2,6 +2,7 @@ import SwiftUI
 
 struct StatusView: View {
     @EnvironmentObject var pollingManager: PollingManager
+    @EnvironmentObject var instanceStore: InstanceStore
     @State private var showingPreferences = false
     @State private var selectedTab = 0
 
@@ -9,7 +10,7 @@ struct StatusView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("MDEMG")
+                Text(instanceStore.selectedInstance?.name ?? "MDEMG")
                     .font(.headline)
                 Spacer()
                 statusBadge
@@ -20,12 +21,21 @@ struct StatusView: View {
                 .buttonStyle(.plain)
                 .popover(isPresented: $showingPreferences) {
                     PreferencesView()
-                        .frame(width: 360, height: 320)
+                        .environmentObject(instanceStore)
+                        .environmentObject(pollingManager)
+                        .frame(width: 360, height: 360)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.top, 12)
             .padding(.bottom, 6)
+
+            // Instance picker — only when multiple instances registered
+            if instanceStore.instances.count > 1 {
+                instancePicker
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+            }
 
             Divider()
 
@@ -74,6 +84,46 @@ struct StatusView: View {
         }
         .frame(width: 375, height: 460)
     }
+
+    // MARK: - Instance Picker
+
+    private var instancePicker: some View {
+        Picker("", selection: Binding(
+            get: { instanceStore.selectedInstanceId },
+            set: { newId in
+                if let id = newId,
+                   let inst = instanceStore.instances.first(where: { $0.id == id }) {
+                    pollingManager.switchToInstance(inst)
+                }
+            }
+        )) {
+            ForEach(instanceStore.instances) { inst in
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(instanceStatusColor(for: inst.id))
+                        .frame(width: 6, height: 6)
+                    Text(inst.name)
+                }
+                .tag(Optional(inst.id))
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+    }
+
+    private func instanceStatusColor(for instanceId: String) -> Color {
+        guard let state = pollingManager.allInstanceStates[instanceId] else {
+            return .gray
+        }
+        switch state.healthStatus {
+        case .healthy: return .green
+        case .degraded: return .yellow
+        case .stopped: return .red
+        case .unknown: return .gray
+        }
+    }
+
+    // MARK: - Status Badge
 
     private var statusBadge: some View {
         let state = pollingManager.serverState
