@@ -3,11 +3,36 @@ import SwiftUI
 import Combine
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private let pollingManager = PollingManager()
     private var cancellables = Set<AnyCancellable>()
+
+    private lazy var contextMenu: NSMenu = {
+        let menu = NSMenu()
+        menu.delegate = self
+
+        let prefsItem = NSMenuItem(
+            title: "Preferences...",
+            action: #selector(openPreferences),
+            keyEquivalent: ","
+        )
+        prefsItem.target = self
+        menu.addItem(prefsItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let quitItem = NSMenuItem(
+            title: "Quit MDEMG Menu Bar",
+            action: #selector(quitApp),
+            keyEquivalent: "q"
+        )
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        return menu
+    }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Create menu bar status item
@@ -15,8 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         if let button = statusItem?.button {
             button.image = makeCircleImage(color: .systemGray)
-            button.action = #selector(togglePopover)
+            button.action = #selector(handleStatusItemClick)
             button.target = self
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         // Configure popover
@@ -42,9 +68,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         pollingManager.stopPolling()
     }
 
+    // MARK: - Click handling
+
+    @objc private func handleStatusItemClick() {
+        guard let button = statusItem?.button,
+              let event = NSApp.currentEvent else { return }
+
+        if event.type == .rightMouseUp {
+            // Show context menu on right-click
+            // Temporarily set menu so NSStatusItem shows it positioned correctly,
+            // then clear it in menuDidClose so left-click resumes popover behavior.
+            statusItem?.menu = contextMenu
+            button.performClick(nil)
+        } else {
+            togglePopover()
+        }
+    }
+
     // MARK: - Popover
 
-    @objc private func togglePopover() {
+    private func togglePopover() {
         guard let button = statusItem?.button else { return }
         if popover.isShown {
             popover.performClose(nil)
@@ -56,6 +99,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         pollingManager.setPopoverVisible(false)
+    }
+
+    // MARK: - NSMenuDelegate
+
+    func menuDidClose(_ menu: NSMenu) {
+        // Clear menu so the next left-click triggers the action selector
+        // instead of re-showing the context menu.
+        statusItem?.menu = nil
+    }
+
+    // MARK: - Context menu actions
+
+    @objc private func openPreferences() {
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    }
+
+    @objc private func quitApp() {
+        NSApplication.shared.terminate(nil)
     }
 
     // MARK: - Icon state
