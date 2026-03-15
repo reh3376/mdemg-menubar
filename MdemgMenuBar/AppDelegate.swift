@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private let instanceStore = InstanceStore()
+    private let updateChecker = UpdateChecker()
     private var pollingManager: PollingManager!
     private var instanceScanner: InstanceScanner!
     private var cancellables = Set<AnyCancellable>()
@@ -58,9 +59,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
         }
 
         // Configure popover — inject both instanceStore and pollingManager
+        // Start update checker
+        updateChecker.startPeriodicChecks()
+
         let contentView = StatusView()
             .environmentObject(pollingManager)
             .environmentObject(instanceStore)
+            .environmentObject(updateChecker)
         popover.contentSize = NSSize(width: 375, height: 460)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: contentView)
@@ -81,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
     func applicationWillTerminate(_ notification: Notification) {
         pollingManager.stopPolling()
         instanceScanner.stop()
+        updateChecker.stopPeriodicChecks()
     }
 
     // MARK: - Click handling

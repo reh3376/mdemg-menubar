@@ -3,6 +3,7 @@ import SwiftUI
 struct StatusView: View {
     @EnvironmentObject var pollingManager: PollingManager
     @EnvironmentObject var instanceStore: InstanceStore
+    @EnvironmentObject var updateChecker: UpdateChecker
     @State private var showingPreferences = false
     @State private var selectedTab = 0
 
@@ -15,15 +16,26 @@ struct StatusView: View {
                 Spacer()
                 statusBadge
                 Button(action: { showingPreferences = true }) {
-                    Image(systemName: "gear")
-                        .foregroundColor(.secondary)
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "gear")
+                            .foregroundColor(.secondary)
+                        if updateChecker.updateAvailable {
+                            Circle()
+                                .fill(.blue)
+                                .frame(width: 6, height: 6)
+                                .offset(x: 2, y: -2)
+                        }
+                    }
                 }
                 .buttonStyle(.plain)
+                .help(updateChecker.updateAvailable ? "Update available" : "Preferences")
                 .popover(isPresented: $showingPreferences) {
                     PreferencesView()
                         .environmentObject(instanceStore)
                         .environmentObject(pollingManager)
-                        .frame(width: 360, height: 360)
+                        .environmentObject(updateChecker)
+                        .frame(width: 375)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.horizontal, 12)
