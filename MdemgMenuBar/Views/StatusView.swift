@@ -262,9 +262,10 @@ struct MemoryStatsTab: View {
                             ("L4", "Meta"),
                             ("L5", "Emergent"),
                         ]
-                        ForEach(layerNames, id: \.0) { key, name in
-                            let count = layers[key] ?? layers[key.lowercased()] ?? 0
-                            InfoRow(label: "  \(key) \(name)", value: Formatting.formatNumber(Int(count)))
+                        ForEach(Array(layerNames.enumerated()), id: \.offset) { index, pair in
+                            let (label, name) = pair
+                            let count = layers["\(index)"] ?? layers[label] ?? layers[label.lowercased()] ?? 0
+                            InfoRow(label: "  \(label) \(name)", value: Formatting.formatNumber(Int(count)))
                         }
                     }
 
