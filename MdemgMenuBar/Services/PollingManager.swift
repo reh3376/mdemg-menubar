@@ -516,10 +516,8 @@ final class PollingManager: ObservableObject {
                 self.spacesData = spaces
             } catch {}
 
-            // Auto-fetch config if not yet loaded
-            if self.configData == nil {
-                fetchConfig()
-            }
+            // Fetch config on every stats poll (values may change across instances)
+            fetchConfig()
         }
     }
 
