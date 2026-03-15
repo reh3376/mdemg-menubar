@@ -98,12 +98,12 @@ final class ServerDiscovery {
     /// 1. If `preferenceOverride` is provided and non-empty, use it directly.
     /// 2. If `.mdemg.port` file exists and contains a valid port, use localhost:port.
     /// 3. If `.mdemg/mdemg.pid` exists and the process is alive, use localhost:9999.
-    /// 4. Fallback: localhost:9999.
+    /// 4. Returns nil — no evidence of a running server for this project.
     ///
     /// - Parameter preferenceOverride: An optional user-configured URL string
     ///   (e.g., from app preferences).
-    /// - Returns: The resolved server URL.
-    func resolveEndpoint(preferenceOverride: String? = nil) -> URL {
+    /// - Returns: The resolved server URL, or nil if no server evidence found.
+    func resolveEndpoint(preferenceOverride: String? = nil) -> URL? {
         // Chain 1: Explicit preference override
         if let override = preferenceOverride,
            !override.isEmpty,
@@ -111,21 +111,40 @@ final class ServerDiscovery {
             return url
         }
 
-        // Chain 2: Port file discovery
+        // Chain 2: Port file discovery (strongest signal — server wrote this at runtime)
         if let port = discoverPort() {
             if let url = URL(string: "http://localhost:\(port)") {
                 return url
             }
         }
 
-        // Chain 3: PID file liveness check (confirms server is running, use default port)
+        // Chain 3: PID file liveness check (server may be running but port file missing)
         if let pid = discoverPID(), isProcessAlive(pid: pid) {
-            // Server is alive but no port file; assume default port
-            return URL(string: "http://localhost:9999")!
+            return URL(string: "http://localhost:9999")
         }
 
-        // Chain 4: Fallback to default
-        return URL(string: "http://localhost:9999")!
+        // No evidence of a running server for this project directory.
+        return nil
+    }
+
+    /// Clean up stale PID file if the referenced process is dead.
+    ///
+    /// Called during background polling to prevent stale PID files from
+    /// causing false status reports.
+    ///
+    /// - Returns: True if a stale file was removed.
+    @discardableResult
+    func cleanStalePIDFile() -> Bool {
+        let pidFile = projectDirectory
+            .appendingPathComponent(".mdemg")
+            .appendingPathComponent("mdemg.pid")
+        guard FileManager.default.fileExists(atPath: pidFile.path),
+              let pid = discoverPID(),
+              !isProcessAlive(pid: pid) else {
+            return false
+        }
+        try? FileManager.default.removeItem(at: pidFile)
+        return true
     }
 
     // MARK: - Convenience Paths

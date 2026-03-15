@@ -66,7 +66,7 @@ final class InstanceScanner {
             let (spaceId, port) = parseConfig(at: configFile)
             let name = dirURL.lastPathComponent
             var serverURL: String?
-            if let port = port, port != 9999 {
+            if let port = port {
                 serverURL = "http://localhost:\(port)"
             }
 

@@ -68,7 +68,26 @@ final class InstanceStore: ObservableObject {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            instances = try decoder.decode([MdemgInstance].self, from: data)
+            var loaded = try decoder.decode([MdemgInstance].self, from: data)
+
+            // Defense-in-depth: filter out excluded auto-discovered instances.
+            // This catches cases where instances.json was externally modified
+            // (e.g., by CLI) or a race condition restored a removed instance.
+            let beforeCount = loaded.count
+            loaded.removeAll { instance in
+                instance.source == .autoDiscovery &&
+                excludedDirectories.contains(
+                    (instance.projectDirectory as NSString).standardizingPath
+                )
+            }
+            if loaded.count < beforeCount {
+                print("[InstanceStore] Filtered \(beforeCount - loaded.count) excluded instance(s) on load")
+                instances = loaded
+                save() // Persist the cleaned list
+                return
+            }
+
+            instances = loaded
         } catch {
             print("[InstanceStore] Failed to load instances: \(error)")
             instances = []

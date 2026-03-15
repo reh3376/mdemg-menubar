@@ -117,15 +117,18 @@ final class PollingManager: ObservableObject {
                 projectDirectory: URL(fileURLWithPath: selected.projectDirectory)
             )
             self.discovery = disc
+            // Selected instance gets localhost:9999 fallback so user can start its server
             let endpoint = selected.serverURL
                 .flatMap { URL(string: $0) }
                 ?? disc.resolveEndpoint()
+                ?? URL(string: "http://localhost:9999")!
             self.client = MdemgClient(baseURL: endpoint)
             self.cliExecutor = CLIExecutor(workingDirectory: selected.projectDirectory)
             self.spaceId = selected.spaceId
         } else {
             self.discovery = ServerDiscovery()
             let endpoint = discovery.resolveEndpoint()
+                ?? URL(string: "http://localhost:9999")!
             self.client = MdemgClient(baseURL: endpoint)
             self.cliExecutor = CLIExecutor()
         }
@@ -151,9 +154,11 @@ final class PollingManager: ObservableObject {
             projectDirectory: URL(fileURLWithPath: instance.projectDirectory)
         )
         self.discovery = disc
+        // Selected instance gets localhost:9999 fallback so user can start its server
         let endpoint = instance.serverURL
             .flatMap { URL(string: $0) }
             ?? disc.resolveEndpoint()
+            ?? URL(string: "http://localhost:9999")!
         self.client = MdemgClient(baseURL: endpoint)
         self.cliExecutor = CLIExecutor(workingDirectory: instance.projectDirectory)
         self.spaceId = instance.spaceId
@@ -430,13 +435,25 @@ final class PollingManager: ObservableObject {
         let nonSelected = instanceStore.instances.filter { $0.id != selectedId }
 
         for instance in nonSelected {
+            let disc = ServerDiscovery(
+                projectDirectory: URL(fileURLWithPath: instance.projectDirectory)
+            )
+
+            // Clean up stale PID files before resolving endpoint
+            disc.cleanStalePIDFile()
+
+            guard let endpoint = instance.serverURL
+                .flatMap({ URL(string: $0) })
+                ?? disc.resolveEndpoint() else {
+                // No evidence of a running server — mark as stopped
+                var state = ServerState()
+                state.lastUpdated = Date()
+                state.healthStatus = .stopped
+                allInstanceStates[instance.id] = state
+                continue
+            }
+
             Task {
-                let disc = ServerDiscovery(
-                    projectDirectory: URL(fileURLWithPath: instance.projectDirectory)
-                )
-                let endpoint = instance.serverURL
-                    .flatMap { URL(string: $0) }
-                    ?? disc.resolveEndpoint()
                 let bgClient = MdemgClient(baseURL: endpoint)
 
                 var state = ServerState()
@@ -450,7 +467,7 @@ final class PollingManager: ObservableObject {
                     state.healthStatus = .degraded
                     state.isRunning = true
                 } else {
-                    state.healthStatus = .unknown
+                    state.healthStatus = .stopped
                 }
 
                 allInstanceStates[instance.id] = state
