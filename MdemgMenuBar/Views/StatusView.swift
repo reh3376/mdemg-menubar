@@ -234,19 +234,17 @@ struct OverviewTab: View {
             InfoRow(label: "  API Key", value: "—")
         }
 
-        let namingModel = pollingManager.configValue(for: "llm.model")
-            ?? pollingManager.configValue(for: "emergence_model")
-            ?? pollingManager.configValue(for: "naming_model")
+        let namingModel = pollingManager.configValue(for: "emergence.model")
+            ?? pollingManager.configValue(for: "llm.model")
             ?? "—"
         InfoRow(label: "Naming Model", value: namingModel)
 
-        let summaryModel = pollingManager.configValue(for: "summarize.model")
+        let summaryModel = pollingManager.configValue(for: "summary.model")
             ?? pollingManager.configValue(for: "llm.model")
-            ?? pollingManager.configValue(for: "summary_model")
             ?? "—"
         InfoRow(label: "Summary Model", value: summaryModel)
 
-        let reranker = pollingManager.configValue(for: "reranker")
+        let reranker = pollingManager.configValue(for: "reranker.model")
         InfoRow(label: "Reranker", value: reranker ?? "disabled")
 
         Divider().padding(.vertical, 2)
