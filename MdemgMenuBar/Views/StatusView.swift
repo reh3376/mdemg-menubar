@@ -438,10 +438,22 @@ struct Neo4jTab: View {
                         .font(.caption)
                         .padding(.top, 20)
                 } else {
-                    Text("Server not running")
-                        .foregroundColor(.secondary)
-                        .padding(.top, 20)
+                    InfoRow(label: "Status", value: pollingManager.neo4jIsRunning ? "Running (server offline)" : "Stopped")
                 }
+
+                Divider().padding(.vertical, 2)
+
+                // Neo4j container lifecycle controls
+                let neo4jRunning = pollingManager.neo4jIsRunning
+                HStack(spacing: 8) {
+                    Button("Start") { pollingManager.startNeo4j() }
+                        .disabled(neo4jRunning)
+                    Button("Stop") { pollingManager.stopNeo4j() }
+                        .disabled(!neo4jRunning)
+                    Button("Restart") { pollingManager.restartNeo4j() }
+                        .disabled(!neo4jRunning)
+                }
+                .controlSize(.small)
             }
             .padding(12)
         }

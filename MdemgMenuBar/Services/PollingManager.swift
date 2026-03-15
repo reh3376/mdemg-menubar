@@ -63,6 +63,7 @@ final class PollingManager: ObservableObject {
     @Published var logLines: [String] = []
     @Published var isPopoverVisible: Bool = false
     @Published var neo4jUptime: TimeInterval?
+    @Published var neo4jIsRunning: Bool = false
 
     // MARK: - Configuration
 
@@ -189,6 +190,47 @@ final class PollingManager: ObservableObject {
         }
     }
 
+    // MARK: - Neo4j Lifecycle Controls
+
+    /// Start the Neo4j Docker container, then poll health after a brief delay.
+    func startNeo4j() {
+        Task {
+            do {
+                _ = try await cliExecutor.neo4jStart()
+                try await Task.sleep(nanoseconds: 3_000_000_000)
+                pollHealth()
+            } catch {
+                neo4jIsRunning = false
+            }
+        }
+    }
+
+    /// Stop the Neo4j Docker container, then poll health after a brief delay.
+    func stopNeo4j() {
+        Task {
+            do {
+                _ = try await cliExecutor.neo4jStop()
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+                pollHealth()
+            } catch {
+                // Best-effort; poll will detect the state change
+            }
+        }
+    }
+
+    /// Restart the Neo4j Docker container, then poll health after a brief delay.
+    func restartNeo4j() {
+        Task {
+            do {
+                _ = try await cliExecutor.neo4jRestart()
+                try await Task.sleep(nanoseconds: 3_000_000_000)
+                pollHealth()
+            } catch {
+                neo4jIsRunning = false
+            }
+        }
+    }
+
     /// Open the MDEMG log file in the default application.
     func openLogs() {
         let logURL = discovery.logFilePath()
@@ -254,27 +296,28 @@ final class PollingManager: ObservableObject {
                     // Non-fatal: readyz may not be available on older servers
                 }
 
-                // Fetch Neo4j container uptime
-                let uptime = await cliExecutor.neo4jContainerUptime()
-                self.neo4jUptime = uptime
+                // Fetch Neo4j container state
+                let neo4jRunning = await cliExecutor.neo4jContainerRunning()
+                self.neo4jIsRunning = neo4jRunning
+                self.neo4jUptime = neo4jRunning ? await cliExecutor.neo4jContainerUptime() : nil
 
                 resetBackoff()
-            } else if state.isRunning {
-                // PID alive but healthz failed
-                state.healthStatus = .degraded
-                self.readinessData = nil
-                self.neo4jUptime = nil
-                applyBackoff()
-            } else if state.pid != nil {
-                // PID file exists but process dead
-                state.healthStatus = .stopped
-                self.readinessData = nil
-                self.neo4jUptime = nil
-                applyBackoff()
             } else {
-                state.healthStatus = .unknown
+                // Server not healthy — still check Neo4j container independently
+                let neo4jRunning = await cliExecutor.neo4jContainerRunning()
+                self.neo4jIsRunning = neo4jRunning
+                self.neo4jUptime = neo4jRunning ? await cliExecutor.neo4jContainerUptime() : nil
+
+                if state.isRunning {
+                    // PID alive but healthz failed
+                    state.healthStatus = .degraded
+                } else if state.pid != nil {
+                    // PID file exists but process dead
+                    state.healthStatus = .stopped
+                } else {
+                    state.healthStatus = .unknown
+                }
                 self.readinessData = nil
-                self.neo4jUptime = nil
                 applyBackoff()
             }
 

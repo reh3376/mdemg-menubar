@@ -100,16 +100,62 @@ final class CLIExecutor {
         try await execute(arguments: ["db", "migrate"])
     }
 
-    /// Get Neo4j container uptime by inspecting the Docker container start time.
+    /// The Neo4j Docker container name (matches docker-compose.yml).
+    static let neo4jContainer = "mdemg-neo4j"
+
+    /// Check if the Neo4j Docker container is currently running.
     ///
-    /// Runs `docker inspect --format '{{.State.StartedAt}}' mdemg-neo4j-dev`.
+    /// - Returns: True if the container exists and is in running state.
+    func neo4jContainerRunning() async -> Bool {
+        do {
+            let output = try await executeRaw(
+                executablePath: "/usr/local/bin/docker",
+                arguments: ["inspect", "--format", "{{.State.Running}}", Self.neo4jContainer]
+            )
+            return output.trimmingCharacters(in: .whitespacesAndNewlines) == "true"
+        } catch {
+            return false
+        }
+    }
+
+    /// Start the Neo4j Docker container.
+    ///
+    /// Runs `docker start mdemg-neo4j`.
+    func neo4jStart() async throws -> String {
+        try await executeRaw(
+            executablePath: "/usr/local/bin/docker",
+            arguments: ["start", Self.neo4jContainer]
+        )
+    }
+
+    /// Stop the Neo4j Docker container.
+    ///
+    /// Runs `docker stop mdemg-neo4j`.
+    func neo4jStop() async throws -> String {
+        try await executeRaw(
+            executablePath: "/usr/local/bin/docker",
+            arguments: ["stop", Self.neo4jContainer]
+        )
+    }
+
+    /// Restart the Neo4j Docker container.
+    ///
+    /// Runs `docker restart mdemg-neo4j`.
+    func neo4jRestart() async throws -> String {
+        try await executeRaw(
+            executablePath: "/usr/local/bin/docker",
+            arguments: ["restart", Self.neo4jContainer]
+        )
+    }
+
+    /// Get Neo4j container uptime by inspecting the Docker container start time.
     ///
     /// - Returns: The time interval since the container started, or nil if not running.
     func neo4jContainerUptime() async -> TimeInterval? {
         do {
             let output = try await executeRaw(
                 executablePath: "/usr/local/bin/docker",
-                arguments: ["inspect", "--format", "{{.State.StartedAt}}", "mdemg-neo4j-dev"]
+                arguments: ["inspect", "--format", "{{.State.StartedAt}}", Self.neo4jContainer]
             )
             let dateStr = output.trimmingCharacters(in: .whitespacesAndNewlines)
             let formatter = ISO8601DateFormatter()
