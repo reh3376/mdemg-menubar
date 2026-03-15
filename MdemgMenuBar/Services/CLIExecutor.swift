@@ -153,6 +153,37 @@ final class CLIExecutor {
         )
     }
 
+    /// Get Neo4j container resource limits (memory and CPUs).
+    ///
+    /// Uses `docker inspect` to read HostConfig.Memory (bytes) and HostConfig.NanoCpus.
+    ///
+    /// - Returns: A tuple of memory in MB and CPU count, both optional.
+    func neo4jContainerResources() async -> (memoryMB: Int?, cpus: Double?) {
+        do {
+            let output = try await executeRaw(
+                executablePath: "/usr/local/bin/docker",
+                arguments: [
+                    "inspect", "--format",
+                    "{{.HostConfig.Memory}} {{.HostConfig.NanoCpus}}",
+                    Self.neo4jContainer,
+                ]
+            )
+            let parts = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                .components(separatedBy: " ")
+            var memoryMB: Int?
+            var cpus: Double?
+            if parts.count >= 1, let bytes = Int64(parts[0]), bytes > 0 {
+                memoryMB = Int(bytes / 1_048_576) // bytes → MB
+            }
+            if parts.count >= 2, let nanoCpus = Double(parts[1]), nanoCpus > 0 {
+                cpus = nanoCpus / 1_000_000_000.0 // nanoCPUs → CPUs
+            }
+            return (memoryMB: memoryMB, cpus: cpus)
+        } catch {
+            return (memoryMB: nil, cpus: nil)
+        }
+    }
+
     /// Get Neo4j container uptime by inspecting the Docker container start time.
     ///
     /// - Returns: The time interval since the container started, or nil if not running.

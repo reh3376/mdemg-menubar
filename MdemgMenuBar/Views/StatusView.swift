@@ -210,45 +210,39 @@ struct OverviewTab: View {
 
         Divider().padding(.vertical, 2)
 
-        // Neo4j
+        // Services — always show all fields
         SectionHeader("Services")
-        if let neo4jCheck = readiness?.checks["neo4j"] {
-            InfoRow(label: "Neo4j", value: "ok - \(neo4jCheck.status)")
-        } else {
-            InfoRow(label: "Neo4j", value: "loading...")
-        }
+        let neo4jStatus = readiness?.checks["neo4j"].map { "ok - \($0.status)" } ?? "loading..."
+        InfoRow(label: "Neo4j", value: neo4jStatus)
         InfoRow(label: "Neo4j Port", value: "7687")
-        if let neo4jUp = pollingManager.neo4jUptime {
-            InfoRow(label: "Neo4j Uptime", value: Formatting.formatUptimeDHMS(neo4jUp))
-        }
+        InfoRow(label: "Neo4j Uptime", value: pollingManager.neo4jUptime.map { Formatting.formatUptimeDHMS($0) } ?? "—")
 
         InfoRow(label: "MDEMG Server", value: "ok - running")
-        if let port = state.port {
-            InfoRow(label: "Server Port", value: "\(port)")
-        }
-        if let uptime = state.uptime {
-            InfoRow(label: "Server Uptime", value: Formatting.formatUptimeDHMS(uptime))
-        }
+        InfoRow(label: "Server Port", value: state.port.map { "\($0)" } ?? "—")
+        InfoRow(label: "Server Uptime", value: state.uptime.map { Formatting.formatUptimeDHMS($0) } ?? "—")
 
         Divider().padding(.vertical, 2)
 
-        // Model inventory
+        // Model inventory — always show all fields
         SectionHeader("Models")
         if let emb = pollingManager.embeddingHealthData {
             InfoRow(label: "Embedding Model", value: emb.model ?? emb.provider)
             let apiKeyLabel = emb.configuredEnvVar ? "yes" : (emb.provider == "ollama" ? "local" : "no")
             InfoRow(label: "  API Key", value: apiKeyLabel)
         } else {
-            InfoRow(label: "Embedding Model", value: "loading...")
+            InfoRow(label: "Embedding Model", value: "—")
+            InfoRow(label: "  API Key", value: "—")
         }
 
-        let namingModel = pollingManager.configValue(for: "emergence_model")
+        let namingModel = pollingManager.configValue(for: "llm.model")
+            ?? pollingManager.configValue(for: "emergence_model")
             ?? pollingManager.configValue(for: "naming_model")
             ?? "—"
         InfoRow(label: "Naming Model", value: namingModel)
 
-        let summaryModel = pollingManager.configValue(for: "summary_model")
-            ?? pollingManager.configValue(for: "summarize_model")
+        let summaryModel = pollingManager.configValue(for: "summarize.model")
+            ?? pollingManager.configValue(for: "llm.model")
+            ?? pollingManager.configValue(for: "summary_model")
             ?? "—"
         InfoRow(label: "Summary Model", value: summaryModel)
 
@@ -257,33 +251,43 @@ struct OverviewTab: View {
 
         Divider().padding(.vertical, 2)
 
-        // Subsystem health
+        // Subsystem health — always show all fields
         SectionHeader("Subsystems")
-        if let checks = readiness?.checks {
-            if let plugins = checks["plugins"] {
-                InfoRow(label: "Plugins", value: plugins.message ?? plugins.status)
-            }
-            if let cb = checks["circuit_breakers"] {
-                InfoRow(label: "Circuit Breakers", value: cb.message ?? cb.status)
-            }
-            if let cms = checks["conversation"] {
-                InfoRow(label: "CMS", value: cms.message ?? cms.status)
-            }
-        }
+        let checks = readiness?.checks
+        InfoRow(label: "Plugins", value: checks?["plugins"].map { $0.message ?? $0.status } ?? "—")
+        InfoRow(label: "Circuit Breakers", value: checks?["circuit_breakers"].map { $0.message ?? $0.status } ?? "—")
+        InfoRow(label: "CMS", value: checks?["conversation"].map { $0.message ?? $0.status } ?? "—")
     }
 
     @ViewBuilder
     private func stoppedLayout(state: ServerState) -> some View {
-        InfoRow(label: "MDEMG Status", value: "required systems stopped")
+        InfoRow(label: "MDEMG Status", value: "stopped")
 
         Divider().padding(.vertical, 2)
 
+        SectionHeader("Services")
         InfoRow(label: "Neo4j", value: "stopped")
+        InfoRow(label: "Neo4j Port", value: "—")
+        InfoRow(label: "Neo4j Uptime", value: "—")
         InfoRow(label: "MDEMG Server", value: "stopped")
+        InfoRow(label: "Server Port", value: "—")
+        InfoRow(label: "Server Uptime", value: "—")
 
         Divider().padding(.vertical, 2)
 
-        InfoRow(label: "Models", value: "unavailable")
+        SectionHeader("Models")
+        InfoRow(label: "Embedding Model", value: "—")
+        InfoRow(label: "  API Key", value: "—")
+        InfoRow(label: "Naming Model", value: "—")
+        InfoRow(label: "Summary Model", value: "—")
+        InfoRow(label: "Reranker", value: "—")
+
+        Divider().padding(.vertical, 2)
+
+        SectionHeader("Subsystems")
+        InfoRow(label: "Plugins", value: "—")
+        InfoRow(label: "Circuit Breakers", value: "—")
+        InfoRow(label: "CMS", value: "—")
     }
 
     private func readinessStatusLabel(_ readiness: ReadinessResponse?) -> String {
@@ -354,6 +358,17 @@ struct MemoryStatsTab: View {
                         InfoRow(label: "  Avg Weight", value: String(format: "%.3f", learn.avgWeight))
                         InfoRow(label: "  Max Weight", value: String(format: "%.3f", learn.maxWeight))
                     }
+                    // Active Spaces
+                    if let spaces = pollingManager.spacesData, !spaces.isEmpty {
+                        Divider().padding(.vertical, 2)
+                        SectionHeader("Active Spaces")
+                        ForEach(spaces, id: \.spaceId) { space in
+                            InfoRow(
+                                label: "  \(space.spaceId)",
+                                value: "\(Formatting.formatNumber(Int(space.nodeCount))) nodes"
+                            )
+                        }
+                    }
                 } else if pollingManager.serverState.isRunning {
                     HStack {
                         Spacer()
@@ -377,6 +392,10 @@ struct MemoryStatsTab: View {
 
 struct LearningTab: View {
     @EnvironmentObject var pollingManager: PollingManager
+    @State private var showFreezeConfirm = false
+    @State private var showUnfreezeConfirm = false
+    @State private var showPruneConfirm = false
+    @State private var actionMessage: String?
 
     var body: some View {
         ScrollView {
@@ -445,6 +464,51 @@ struct LearningTab: View {
                             InfoRow(label: "  Reason", value: reason)
                         }
                     }
+
+                    // Actions
+                    Divider().padding(.vertical, 2)
+                    SectionHeader("Actions")
+
+                    HStack(spacing: 8) {
+                        if learning.freezeState?.frozen == true {
+                            Button("Unfreeze") { showUnfreezeConfirm = true }
+                                .controlSize(.small)
+                                .alert("Unfreeze Learning?", isPresented: $showUnfreezeConfirm) {
+                                    Button("Cancel", role: .cancel) {}
+                                    Button("Unfreeze") { performUnfreeze() }
+                                } message: {
+                                    Text("Resume Hebbian learning for space \"\(pollingManager.spaceId)\".")
+                                }
+                        } else {
+                            Button("Freeze") { showFreezeConfirm = true }
+                                .controlSize(.small)
+                                .alert("Freeze Learning?", isPresented: $showFreezeConfirm) {
+                                    Button("Cancel", role: .cancel) {}
+                                    Button("Freeze") { performFreeze() }
+                                } message: {
+                                    Text("Pause Hebbian learning for space \"\(pollingManager.spaceId)\". Useful for stable scoring during benchmarks.")
+                                }
+                        }
+
+                        Button("Prune Edges") { showPruneConfirm = true }
+                            .controlSize(.small)
+                            .alert("Prune Learning Edges?", isPresented: $showPruneConfirm) {
+                                Button("Cancel", role: .cancel) {}
+                                Button("Prune", role: .destructive) { performPrune() }
+                            } message: {
+                                Text("Remove weak and stale CO_ACTIVATED_WITH edges from space \"\(pollingManager.spaceId)\".")
+                            }
+
+                        Button("Refresh") { pollingManager.pollStats() }
+                            .controlSize(.small)
+                    }
+
+                    if let msg = actionMessage {
+                        Text(msg)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .padding(.top, 2)
+                    }
                 }
 
                 if !pollingManager.serverState.isRunning && pollingManager.distributionData == nil {
@@ -454,6 +518,39 @@ struct LearningTab: View {
                 }
             }
             .padding(12)
+        }
+    }
+
+    private func performFreeze() {
+        Task {
+            do {
+                try await pollingManager.freezeLearning()
+                actionMessage = "Learning frozen"
+            } catch {
+                actionMessage = "Freeze failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func performUnfreeze() {
+        Task {
+            do {
+                try await pollingManager.unfreezeLearning()
+                actionMessage = "Learning unfrozen"
+            } catch {
+                actionMessage = "Unfreeze failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func performPrune() {
+        Task {
+            do {
+                let result = try await pollingManager.pruneLearning()
+                actionMessage = "Pruned \(result.totalDeleted) edges"
+            } catch {
+                actionMessage = "Prune failed: \(error.localizedDescription)"
+            }
         }
     }
 }
@@ -505,6 +602,25 @@ struct Neo4jTab: View {
                     InfoRow(label: "Status", value: pollingManager.neo4jIsRunning ? "Running (server offline)" : "Stopped")
                 }
 
+                // Container resources
+                if pollingManager.neo4jIsRunning {
+                    Divider().padding(.vertical, 2)
+                    SectionHeader("Container Resources")
+                    if let mem = pollingManager.neo4jMemoryMB {
+                        let display = mem >= 1024
+                            ? String(format: "%.1f GB", Double(mem) / 1024.0)
+                            : "\(mem) MB"
+                        InfoRow(label: "  Memory Limit", value: display)
+                    } else {
+                        InfoRow(label: "  Memory Limit", value: "unlimited")
+                    }
+                    if let cpus = pollingManager.neo4jCPUs {
+                        InfoRow(label: "  CPUs", value: String(format: "%.1f", cpus))
+                    } else {
+                        InfoRow(label: "  CPUs", value: "unlimited")
+                    }
+                }
+
                 Divider().padding(.vertical, 2)
 
                 // Neo4j container lifecycle controls
@@ -516,6 +632,16 @@ struct Neo4jTab: View {
                         .disabled(!neo4jRunning)
                     Button("Restart") { pollingManager.restartNeo4j() }
                         .disabled(!neo4jRunning)
+
+                    Spacer()
+
+                    Button("Docker Desktop") {
+                        // Try docker:// URL scheme first, fall back to launching by name
+                        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.docker.docker") {
+                            NSWorkspace.shared.openApplication(at: url, configuration: .init())
+                        }
+                    }
+                    .controlSize(.small)
                 }
                 .controlSize(.small)
             }
@@ -531,6 +657,7 @@ struct ConfigTab: View {
     @State private var actionMessage: String?
     @State private var showBackupConfirm = false
     @State private var showMigrateConfirm = false
+    @State private var showNoConfigAlert = false
 
     var body: some View {
         ScrollView {
@@ -552,7 +679,11 @@ struct ConfigTab: View {
                     SectionHeader("Server Configuration")
                     ForEach(config, id: \.self) { row in
                         if let key = row["key"], let value = row["value"] {
-                            InfoRow(label: key, value: value)
+                            let source = row["source"]
+                            let displayValue = source != nil && source != "default"
+                                ? "\(value) (\(source!))"
+                                : value
+                            InfoRow(label: key, value: displayValue)
                         }
                     }
                 } else {
@@ -605,12 +736,22 @@ struct ConfigTab: View {
                 // Quick actions
                 HStack(spacing: 8) {
                     Button("Edit Config") {
-                        let url = pollingManager.discovery.configFilePath()
-                        NSWorkspace.shared.open(url)
+                        let configURL = pollingManager.discovery.configFilePath()
+                        if FileManager.default.fileExists(atPath: configURL.path) {
+                            NSWorkspace.shared.open(configURL)
+                        } else {
+                            showNoConfigAlert = true
+                        }
                     }
                     .controlSize(.small)
+                    .alert("No Config File", isPresented: $showNoConfigAlert) {
+                        Button("OK") {}
+                    } message: {
+                        Text("Config file not found at \(pollingManager.discovery.configFilePath().path). Run 'mdemg init' to create one.")
+                    }
 
                     Button("Refresh") {
+                        pollingManager.configData = nil
                         pollingManager.fetchConfig()
                     }
                     .controlSize(.small)

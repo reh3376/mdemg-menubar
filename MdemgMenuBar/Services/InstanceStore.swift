@@ -14,6 +14,9 @@ final class InstanceStore: ObservableObject {
     @Published var instances: [MdemgInstance] = []
     @Published var selectedInstanceId: String?
 
+    /// Directories excluded from auto-discovery (user removed them).
+    private(set) var excludedDirectories: Set<String> = []
+
     /// The currently selected instance, or nil if none.
     var selectedInstance: MdemgInstance? {
         instances.first { $0.id == selectedInstanceId }
@@ -34,9 +37,14 @@ final class InstanceStore: ObservableObject {
         appSupportDir.appendingPathComponent("instances.json")
     }
 
+    static var excludedFileURL: URL {
+        appSupportDir.appendingPathComponent("excluded.json")
+    }
+
     // MARK: - Init
 
     init() {
+        loadExcluded()
         load()
         startFileWatcher()
     }
@@ -104,6 +112,7 @@ final class InstanceStore: ObservableObject {
     // MARK: - CRUD
 
     /// Add an instance, deduplicating by project directory.
+    /// Rejects instances whose directory is in the exclusion list (unless source is manual or cliInit).
     @discardableResult
     func add(_ instance: MdemgInstance) -> Bool {
         // Deduplicate by normalized project directory
@@ -111,6 +120,11 @@ final class InstanceStore: ObservableObject {
         if instances.contains(where: {
             ($0.projectDirectory as NSString).standardizingPath == normalized
         }) {
+            return false
+        }
+
+        // Block auto-discovered instances for excluded directories
+        if instance.source == .autoDiscovery && excludedDirectories.contains(normalized) {
             return false
         }
 
@@ -123,7 +137,13 @@ final class InstanceStore: ObservableObject {
     }
 
     /// Remove an instance by ID. Selects next instance if removed was selected.
+    /// Auto-discovered instances are added to the exclusion list to prevent re-discovery.
     func remove(id: String) {
+        if let instance = instances.first(where: { $0.id == id }) {
+            let normalized = (instance.projectDirectory as NSString).standardizingPath
+            excludedDirectories.insert(normalized)
+            saveExcluded()
+        }
         instances.removeAll { $0.id == id }
         if selectedInstanceId == id {
             selectedInstanceId = instances.first?.id
@@ -184,6 +204,39 @@ final class InstanceStore: ObservableObject {
     private func stopFileWatcher() {
         fileWatcherSource?.cancel()
         fileWatcherSource = nil
+    }
+
+    // MARK: - Exclusion Persistence
+
+    /// Load excluded directories from disk.
+    private func loadExcluded() {
+        let url = Self.excludedFileURL
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let dirs = try JSONDecoder().decode([String].self, from: data)
+            excludedDirectories = Set(dirs)
+        } catch {
+            print("[InstanceStore] Failed to load excluded.json: \(error)")
+        }
+    }
+
+    /// Save excluded directories to disk atomically.
+    private func saveExcluded() {
+        let url = Self.excludedFileURL
+
+        do {
+            try FileManager.default.createDirectory(
+                at: Self.appSupportDir,
+                withIntermediateDirectories: true
+            )
+
+            let data = try JSONEncoder().encode(Array(excludedDirectories).sorted())
+            try data.write(to: url, options: .atomic)
+        } catch {
+            print("[InstanceStore] Failed to save excluded.json: \(error)")
+        }
     }
 
     // MARK: - Default Instance

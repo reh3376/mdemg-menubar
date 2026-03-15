@@ -61,10 +61,13 @@ final class PollingManager: ObservableObject {
     @Published var distributionData: DistributionResponse?
     @Published var poolMetricsData: PoolMetricsResponse?
     @Published var configData: [[String: String]]?
+    @Published var spacesData: [SpaceInfo]?
     @Published var logLines: [String] = []
     @Published var isPopoverVisible: Bool = false
     @Published var neo4jUptime: TimeInterval?
     @Published var neo4jIsRunning: Bool = false
+    @Published var neo4jMemoryMB: Int?
+    @Published var neo4jCPUs: Double?
 
     // MARK: - Multi-Instance State
 
@@ -164,6 +167,9 @@ final class PollingManager: ObservableObject {
         distributionData = nil
         poolMetricsData = nil
         configData = nil
+        spacesData = nil
+        neo4jMemoryMB = nil
+        neo4jCPUs = nil
         logLines = []
 
         // Reset backoff and poll immediately
@@ -367,6 +373,14 @@ final class PollingManager: ObservableObject {
                 let neo4jRunning = await cliExecutor.neo4jContainerRunning()
                 self.neo4jIsRunning = neo4jRunning
                 self.neo4jUptime = neo4jRunning ? await cliExecutor.neo4jContainerUptime() : nil
+                if neo4jRunning {
+                    let resources = await cliExecutor.neo4jContainerResources()
+                    self.neo4jMemoryMB = resources.memoryMB
+                    self.neo4jCPUs = resources.cpus
+                } else {
+                    self.neo4jMemoryMB = nil
+                    self.neo4jCPUs = nil
+                }
 
                 resetBackoff()
             } else {
@@ -374,6 +388,14 @@ final class PollingManager: ObservableObject {
                 let neo4jRunning = await cliExecutor.neo4jContainerRunning()
                 self.neo4jIsRunning = neo4jRunning
                 self.neo4jUptime = neo4jRunning ? await cliExecutor.neo4jContainerUptime() : nil
+                if neo4jRunning {
+                    let resources = await cliExecutor.neo4jContainerResources()
+                    self.neo4jMemoryMB = resources.memoryMB
+                    self.neo4jCPUs = resources.cpus
+                } else {
+                    self.neo4jMemoryMB = nil
+                    self.neo4jCPUs = nil
+                }
 
                 if state.isRunning {
                     // PID alive but healthz failed
@@ -488,6 +510,12 @@ final class PollingManager: ObservableObject {
                 self.poolMetricsData = pool
             } catch {}
 
+            // Fetch active spaces
+            do {
+                let spaces = try await client.listSpaces()
+                self.spacesData = spaces
+            } catch {}
+
             // Auto-fetch config if not yet loaded
             if self.configData == nil {
                 fetchConfig()
@@ -521,14 +549,28 @@ final class PollingManager: ObservableObject {
         Task {
             do {
                 let json = try await cliExecutor.configShow()
-                guard let data = json.data(using: .utf8),
-                      let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                    return
-                }
+                guard let data = json.data(using: .utf8) else { return }
+
+                let parsed = try JSONSerialization.jsonObject(with: data)
                 var rows: [[String: String]] = []
-                for (key, value) in dict.sorted(by: { $0.key < $1.key }) {
-                    rows.append(["key": key, "value": "\(value)"])
+
+                if let array = parsed as? [[String: Any]] {
+                    // Array format: [{key, value, source, masked}, ...]
+                    for item in array {
+                        guard let key = item["key"] as? String else { continue }
+                        let value = (item["value"] as? String) ?? ""
+                        let source = (item["source"] as? String) ?? "default"
+                        if !value.isEmpty && value != "(not set)" {
+                            rows.append(["key": key, "value": value, "source": source])
+                        }
+                    }
+                } else if let dict = parsed as? [String: Any] {
+                    // Dict format fallback
+                    for (key, value) in dict.sorted(by: { $0.key < $1.key }) {
+                        rows.append(["key": key, "value": "\(value)"])
+                    }
                 }
+
                 self.configData = rows
             } catch {
                 print("[PollingManager] config fetch error: \(error)")
@@ -644,6 +686,38 @@ final class PollingManager: ObservableObject {
         consecutiveFailures = 0
         currentHealthInterval = Self.baseHealthInterval
         scheduleHealthTimer()
+    }
+
+    // MARK: - Learning Actions
+
+    /// Freeze Hebbian learning for the current space.
+    func freezeLearning(reason: String = "menubar freeze") async throws {
+        try await client.freezeLearning(spaceId: spaceId, reason: reason)
+        // Refresh learning stats to reflect new freeze state
+        do {
+            let learning = try await client.learningStats(spaceId: spaceId)
+            self.learningStatsData = learning
+        } catch {}
+    }
+
+    /// Unfreeze Hebbian learning for the current space.
+    func unfreezeLearning() async throws {
+        try await client.unfreezeLearning(spaceId: spaceId)
+        do {
+            let learning = try await client.learningStats(spaceId: spaceId)
+            self.learningStatsData = learning
+        } catch {}
+    }
+
+    /// Prune weak/stale learning edges for the current space.
+    func pruneLearning() async throws -> PruneResponse {
+        let result = try await client.pruneLearning(spaceId: spaceId)
+        // Refresh learning stats after prune
+        do {
+            let learning = try await client.learningStats(spaceId: spaceId)
+            self.learningStatsData = learning
+        } catch {}
+        return result
     }
 
     deinit {

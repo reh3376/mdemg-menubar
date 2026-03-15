@@ -276,6 +276,25 @@ struct SpaceInfo: Codable {
     let orphanTaproot: Bool
 }
 
+struct PruneResponse: Codable {
+    let spaceId: String
+    let decayedDeleted: Int
+    let excessDeleted: Int
+    let totalDeleted: Int
+}
+
+struct FreezeResponse: Codable {
+    let status: String
+    let spaceId: String?
+    let message: String?
+}
+
+struct UnfreezeResponse: Codable {
+    let status: String
+    let spaceId: String?
+    let message: String?
+}
+
 // MARK: - Internal Wrapper for {"spaces": [...]} response
 
 private struct SpacesResponse: Codable {
@@ -493,6 +512,31 @@ final class MdemgClient {
                       queryItems: [URLQueryItem(name: "space_id", value: spaceId)])
     }
 
+    // MARK: - Learning Actions
+
+    /// POST /v1/learning/freeze -- freeze Hebbian learning for a space.
+    func freezeLearning(spaceId: String, reason: String) async throws -> FreezeResponse {
+        try await post("/v1/learning/freeze", body: [
+            "space_id": spaceId,
+            "reason": reason,
+            "frozen_by": "menubar",
+        ])
+    }
+
+    /// POST /v1/learning/unfreeze -- unfreeze Hebbian learning for a space.
+    func unfreezeLearning(spaceId: String) async throws -> UnfreezeResponse {
+        try await post("/v1/learning/unfreeze", body: [
+            "space_id": spaceId,
+        ])
+    }
+
+    /// POST /v1/learning/prune -- prune weak/stale learning edges.
+    func pruneLearning(spaceId: String) async throws -> PruneResponse {
+        try await post("/v1/learning/prune", body: [
+            "space_id": spaceId,
+        ])
+    }
+
     // MARK: - Generic GET Helper
 
     /// Perform a GET request and decode the JSON response body.
@@ -536,6 +580,52 @@ final class MdemgClient {
         guard (200...299).contains(httpResponse.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? "<no body>"
             throw MdemgClientError.httpError(httpResponse.statusCode, body)
+        }
+
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            throw MdemgClientError.decodingError(error)
+        }
+    }
+
+    // MARK: - Generic POST Helper
+
+    /// Perform a POST request with a JSON body and decode the response.
+    ///
+    /// - Parameters:
+    ///   - path: The API path (e.g., "/v1/learning/freeze").
+    ///   - body: The JSON body as a dictionary.
+    /// - Returns: Decoded response of type `T`.
+    /// - Throws: `MdemgClientError` on network, HTTP, or decoding failures.
+    private func post<T: Decodable>(
+        _ path: String,
+        body: [String: Any]
+    ) async throws -> T {
+        guard let url = URL(string: path, relativeTo: baseURL) else {
+            throw MdemgClientError.invalidURL(path)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw MdemgClientError.networkError(error)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw MdemgClientError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let responseBody = String(data: data, encoding: .utf8) ?? "<no body>"
+            throw MdemgClientError.httpError(httpResponse.statusCode, responseBody)
         }
 
         do {
