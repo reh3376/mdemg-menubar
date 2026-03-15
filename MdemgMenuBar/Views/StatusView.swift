@@ -321,12 +321,13 @@ struct LearningTab: View {
             VStack(alignment: .leading, spacing: 4) {
                 // Distribution phase info
                 if let dist = pollingManager.distributionData, let stats = dist.stats {
-                    InfoRow(label: "Phase", value: stats.phase.capitalized)
-                    InfoRow(label: "Edge Count", value: Formatting.formatNumber(Int(stats.edgeCount)))
-                    InfoRow(label: "Query Count", value: Formatting.formatNumber(stats.queryCount))
+                    SectionHeader("Graph Overview")
+                    InfoRow(label: "  Phase", value: stats.phase.capitalized)
+                    InfoRow(label: "  All Edges", value: Formatting.formatNumber(Int(stats.edgeCount)))
+                    InfoRow(label: "  Query Count", value: Formatting.formatNumber(stats.queryCount))
                     if let trend = stats.trend, let dir = trend.direction {
                         let arrow = dir == "improving" ? " \u{25B2}" : (dir == "declining" ? " \u{25BC}" : "")
-                        InfoRow(label: "Trend", value: "\(dir.capitalized)\(arrow)")
+                        InfoRow(label: "  Trend", value: "\(dir.capitalized)\(arrow)")
                     }
                 } else if pollingManager.serverState.isRunning {
                     ProgressView("Loading...")
@@ -334,15 +335,15 @@ struct LearningTab: View {
                         .padding(.top, 20)
                 }
 
-                // Edge statistics
+                // Hebbian learning edges (CO_ACTIVATED_WITH only)
                 if let learning = pollingManager.learningStatsData {
                     Divider().padding(.vertical, 2)
-                    SectionHeader("Edge Statistics")
+                    SectionHeader("Hebbian Learning Edges")
                     if let total = learning.totalEdges {
-                        InfoRow(label: "  Total Edges", value: Formatting.formatNumber(Int(total)))
+                        InfoRow(label: "  Co-activated", value: Formatting.formatNumber(Int(total)))
                     }
                     if let strong = learning.strongEdges {
-                        InfoRow(label: "  Strong Edges", value: Formatting.formatNumber(Int(strong)))
+                        InfoRow(label: "  Strong", value: Formatting.formatNumber(Int(strong)))
                     }
                     if let surprising = learning.surprisingEdges {
                         InfoRow(label: "  Surprising", value: Formatting.formatNumber(Int(surprising)))
