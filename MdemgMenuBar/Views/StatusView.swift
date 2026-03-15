@@ -34,7 +34,7 @@ struct StatusView: View {
                         .environmentObject(instanceStore)
                         .environmentObject(pollingManager)
                         .environmentObject(updateChecker)
-                        .frame(width: 375)
+                        .frame(width: 395)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -94,7 +94,7 @@ struct StatusView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
         }
-        .frame(width: 375, height: 460)
+        .frame(width: 395, height: 460)
     }
 
     // MARK: - Instance Picker

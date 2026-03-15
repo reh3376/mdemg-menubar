@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
             .environmentObject(pollingManager)
             .environmentObject(instanceStore)
             .environmentObject(updateChecker)
-        popover.contentSize = NSSize(width: 375, height: 460)
+        popover.contentSize = NSSize(width: 395, height: 460)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: contentView)
         popover.delegate = self

@@ -102,7 +102,7 @@ struct PreferencesView: View {
         }
         .formStyle(.grouped)
         .padding()
-        .frame(width: 375)
+        .frame(width: 395)
         .fixedSize(horizontal: false, vertical: true)
         .sheet(isPresented: $showInstanceManager) {
             InstanceManagerView()
