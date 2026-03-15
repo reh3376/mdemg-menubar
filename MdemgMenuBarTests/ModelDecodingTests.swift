@@ -87,6 +87,23 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(result.associatedStale, 5)
     }
 
+    func testMemoryStatsFullResponseDecoding() throws {
+        // Actual API response from GET /v1/memory/stats?space_id=mdemg-dev
+        let json = """
+        {"space_id":"mdemg-dev","memory_count":14040,"observation_count":19644,"memories_by_layer":{"0":12775,"1":1158,"2":98,"3":6,"4":1,"5":2},"embedding_coverage":0.9797720797720798,"avg_embedding_dimensions":3072,"learning_activity":{"co_activated_edges":869,"avg_weight":0.10312914028991368,"max_weight":0.12093742135355633},"temporal_distribution":{"last_24h":1058,"last_7d":13820,"last_30d":13857},"connectivity":{"avg_degree":16.08618233618223,"max_degree":1011,"orphan_count":186},"health_score":0.9832336182336183,"computed_at":"2026-03-14T20:05:12Z"}
+        """.data(using: .utf8)!
+
+        let result = try decoder.decode(MemoryStats.self, from: json)
+        XCTAssertEqual(result.spaceId, "mdemg-dev")
+        XCTAssertEqual(result.memoryCount, 14040)
+        XCTAssertEqual(result.observationCount, 19644)
+        XCTAssertEqual(result.memoriesByLayer?["0"], 12775)
+        XCTAssertEqual(result.learningActivity?.coActivatedEdges, 869)
+        XCTAssertEqual(result.temporalDistribution?.last24h, 1058)
+        XCTAssertEqual(result.connectivity!.avgDegree, 16.086, accuracy: 0.001)
+        XCTAssertEqual(result.healthScore, 0.983, accuracy: 0.001)
+    }
+
     func testDistributionDecoding() throws {
         let json = """
         {"stats":{"space_id":"mdemg-dev","edge_count":52000,"phase":"saturated","query_count":100}}

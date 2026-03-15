@@ -37,7 +37,7 @@ struct PreferencesView: View {
         }
         .formStyle(.grouped)
         .padding()
-        .frame(width: 360, height: 280)
+        .frame(width: 375, height: 280)
     }
 
     private func setLaunchAtLogin(_ enabled: Bool) {

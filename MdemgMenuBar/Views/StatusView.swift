@@ -50,26 +50,19 @@ struct StatusView: View {
                     .environmentObject(pollingManager)
                     .tabItem { Label("Neo4j", systemImage: "cylinder") }
                     .tag(3)
+
+                ConfigTab()
+                    .environmentObject(pollingManager)
+                    .tabItem { Label("Config", systemImage: "gearshape.2") }
+                    .tag(4)
+
+                LogTab()
+                    .environmentObject(pollingManager)
+                    .tabItem { Label("Logs", systemImage: "doc.text") }
+                    .tag(5)
             }
 
-            Divider()
-
-            // Controls + footer
-            HStack(spacing: 8) {
-                let state = pollingManager.serverState
-                Button("Start") { pollingManager.startServer() }
-                    .disabled(state.isRunning)
-                Button("Stop") { pollingManager.stopServer() }
-                    .disabled(!state.isRunning)
-                Button("Restart") { pollingManager.restartServer() }
-                    .disabled(!state.isRunning)
-                Spacer()
-                Button("Open Logs") { pollingManager.openLogs() }
-            }
-            .controlSize(.small)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-
+            // Footer timestamp
             HStack {
                 Spacer()
                 Text("Updated \(Formatting.timeAgo(from: pollingManager.serverState.lastUpdated ?? Date()))")
@@ -77,9 +70,9 @@ struct StatusView: View {
                     .foregroundColor(.secondary)
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 6)
+            .padding(.vertical, 4)
         }
-        .frame(width: 360, height: 420)
+        .frame(width: 375, height: 460)
     }
 
     private var statusBadge: some View {
@@ -122,39 +115,123 @@ struct OverviewTab: View {
         let state = pollingManager.serverState
 
         ScrollView {
-            VStack(alignment: .leading, spacing: 6) {
-                InfoRow(label: "Status", value: state.isRunning ? "Running" : "Stopped")
-
-                if let port = state.port {
-                    InfoRow(label: "Port", value: "\(port)")
-                }
-
-                if let uptime = state.uptime, state.isRunning {
-                    InfoRow(label: "Uptime", value: Formatting.formatDuration(uptime))
-                }
-
-                if let nodes = state.nodeCount {
-                    InfoRow(label: "Nodes", value: Formatting.formatNumber(Int(nodes)))
+            VStack(alignment: .leading, spacing: 4) {
+                if state.isReachable {
+                    runningLayout(state: state)
+                } else {
+                    stoppedLayout(state: state)
                 }
 
                 Divider().padding(.vertical, 2)
 
-                // Neo4j
-                if let neo4j = pollingManager.neo4jHealth {
-                    InfoRow(label: "Neo4j", value: "\(neo4j.database.status) (\(Formatting.formatNumber(Int(neo4j.database.totalNodes))) nodes)")
-                } else {
-                    InfoRow(label: "Neo4j", value: state.isRunning ? "loading..." : "unavailable")
+                // Lifecycle controls — only on this tab
+                HStack(spacing: 8) {
+                    Button("Start") { pollingManager.startServer() }
+                        .disabled(state.isRunning)
+                    Button("Stop") { pollingManager.stopServer() }
+                        .disabled(!state.isRunning)
+                    Button("Restart") { pollingManager.restartServer() }
+                        .disabled(!state.isRunning)
                 }
-
-                // Embedding
-                if let provider = state.embeddingProvider {
-                    let model = state.embeddingModel.map { " (\($0))" } ?? ""
-                    InfoRow(label: "Embedding", value: "\(provider)\(model)")
-                } else {
-                    InfoRow(label: "Embedding", value: state.isRunning ? "loading..." : "unavailable")
-                }
+                .controlSize(.small)
             }
             .padding(12)
+        }
+    }
+
+    @ViewBuilder
+    private func runningLayout(state: ServerState) -> some View {
+        // MDEMG Status header
+        let readiness = pollingManager.readinessData
+        let statusLabel = readinessStatusLabel(readiness)
+        InfoRow(label: "MDEMG Status", value: statusLabel)
+
+        Divider().padding(.vertical, 2)
+
+        // Neo4j
+        SectionHeader("Services")
+        if let neo4jCheck = readiness?.checks["neo4j"] {
+            InfoRow(label: "Neo4j", value: "ok - \(neo4jCheck.status)")
+        } else {
+            InfoRow(label: "Neo4j", value: "loading...")
+        }
+        InfoRow(label: "Neo4j Port", value: "7687")
+        if let neo4jUp = pollingManager.neo4jUptime {
+            InfoRow(label: "Neo4j Uptime", value: Formatting.formatUptimeDHMS(neo4jUp))
+        }
+
+        InfoRow(label: "MDEMG Server", value: "ok - running")
+        if let port = state.port {
+            InfoRow(label: "Server Port", value: "\(port)")
+        }
+        if let uptime = state.uptime {
+            InfoRow(label: "Server Uptime", value: Formatting.formatUptimeDHMS(uptime))
+        }
+
+        Divider().padding(.vertical, 2)
+
+        // Model inventory
+        SectionHeader("Models")
+        if let emb = pollingManager.embeddingHealthData {
+            InfoRow(label: "Embedding Model", value: emb.model ?? emb.provider)
+            let apiKeyLabel = emb.configuredEnvVar ? "yes" : (emb.provider == "ollama" ? "local" : "no")
+            InfoRow(label: "  API Key", value: apiKeyLabel)
+        } else {
+            InfoRow(label: "Embedding Model", value: "loading...")
+        }
+
+        let namingModel = pollingManager.configValue(for: "emergence_model")
+            ?? pollingManager.configValue(for: "naming_model")
+            ?? "—"
+        InfoRow(label: "Naming Model", value: namingModel)
+
+        let summaryModel = pollingManager.configValue(for: "summary_model")
+            ?? pollingManager.configValue(for: "summarize_model")
+            ?? "—"
+        InfoRow(label: "Summary Model", value: summaryModel)
+
+        let reranker = pollingManager.configValue(for: "reranker")
+        InfoRow(label: "Reranker", value: reranker ?? "disabled")
+
+        Divider().padding(.vertical, 2)
+
+        // Subsystem health
+        SectionHeader("Subsystems")
+        if let checks = readiness?.checks {
+            if let plugins = checks["plugins"] {
+                InfoRow(label: "Plugins", value: plugins.message ?? plugins.status)
+            }
+            if let cb = checks["circuit_breakers"] {
+                InfoRow(label: "Circuit Breakers", value: cb.message ?? cb.status)
+            }
+            if let cms = checks["conversation"] {
+                InfoRow(label: "CMS", value: cms.message ?? cms.status)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func stoppedLayout(state: ServerState) -> some View {
+        InfoRow(label: "MDEMG Status", value: "required systems stopped")
+
+        Divider().padding(.vertical, 2)
+
+        InfoRow(label: "Neo4j", value: "stopped")
+        InfoRow(label: "MDEMG Server", value: "stopped")
+
+        Divider().padding(.vertical, 2)
+
+        InfoRow(label: "Models", value: "unavailable")
+    }
+
+    private func readinessStatusLabel(_ readiness: ReadinessResponse?) -> String {
+        guard let r = readiness else {
+            return "ok - running"
+        }
+        switch r.status {
+        case "ready": return "ok - running"
+        case "degraded": return "degraded - see logs"
+        default: return r.status
         }
     }
 }
@@ -166,21 +243,53 @@ struct MemoryStatsTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 if let stats = pollingManager.memoryStatsData {
                     InfoRow(label: "Total Memories", value: Formatting.formatNumber(Int(stats.memoryCount)))
                     InfoRow(label: "Observations", value: Formatting.formatNumber(Int(stats.observationCount)))
+                    InfoRow(label: "Health Score", value: Formatting.formatPercentage(stats.healthScore))
                     InfoRow(label: "Embedding Coverage", value: Formatting.formatPercentage(stats.embeddingCoverage))
-                    InfoRow(label: "Health Score", value: Formatting.formatHealthScore(stats.healthScore))
 
+                    // By Layer
                     if let layers = stats.memoriesByLayer {
                         Divider().padding(.vertical, 2)
-                        Text("By Layer")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        ForEach(layers.sorted(by: { $0.key < $1.key }), id: \.key) { layer, count in
-                            InfoRow(label: "  \(layer)", value: Formatting.formatNumber(Int(count)))
+                        SectionHeader("By Layer")
+                        let layerNames = [
+                            ("L0", "Observations"),
+                            ("L1", "Themes"),
+                            ("L2", "Concepts"),
+                            ("L3", "Abstractions"),
+                            ("L4", "Meta"),
+                            ("L5", "Emergent"),
+                        ]
+                        ForEach(layerNames, id: \.0) { key, name in
+                            let count = layers[key] ?? layers[key.lowercased()] ?? 0
+                            InfoRow(label: "  \(key) \(name)", value: Formatting.formatNumber(Int(count)))
                         }
+                    }
+
+                    // Temporal activity
+                    if let temporal = stats.temporalDistribution {
+                        Divider().padding(.vertical, 2)
+                        SectionHeader("Activity (24h / 7d / 30d)")
+                        let activity = "\(Formatting.formatNumber(Int(temporal.last24h))) / \(Formatting.formatNumber(Int(temporal.last7d))) / \(Formatting.formatNumber(Int(temporal.last30d)))"
+                        InfoRow(label: "  Memories", value: activity)
+                    }
+
+                    // Connectivity
+                    if let conn = stats.connectivity {
+                        Divider().padding(.vertical, 2)
+                        SectionHeader("Connectivity")
+                        InfoRow(label: "  Avg Degree", value: String(format: "%.1f", conn.avgDegree))
+                    }
+
+                    // Learning Activity (co-activated edges)
+                    if let learn = stats.learningActivity {
+                        Divider().padding(.vertical, 2)
+                        SectionHeader("Learning Activity")
+                        InfoRow(label: "  Co-activated Edges", value: Formatting.formatNumber(Int(learn.coActivatedEdges)))
+                        InfoRow(label: "  Avg Weight", value: String(format: "%.3f", learn.avgWeight))
+                        InfoRow(label: "  Max Weight", value: String(format: "%.3f", learn.maxWeight))
                     }
                 } else if pollingManager.serverState.isRunning {
                     HStack {
@@ -208,12 +317,15 @@ struct LearningTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 6) {
-                if let dist = pollingManager.distributionData {
-                    if let stats = dist.stats {
-                        InfoRow(label: "Phase", value: stats.phase.capitalized)
-                        InfoRow(label: "Edge Count", value: Formatting.formatNumber(Int(stats.edgeCount)))
-                        InfoRow(label: "Query Count", value: Formatting.formatNumber(stats.queryCount))
+            VStack(alignment: .leading, spacing: 4) {
+                // Distribution phase info
+                if let dist = pollingManager.distributionData, let stats = dist.stats {
+                    InfoRow(label: "Phase", value: stats.phase.capitalized)
+                    InfoRow(label: "Edge Count", value: Formatting.formatNumber(Int(stats.edgeCount)))
+                    InfoRow(label: "Query Count", value: Formatting.formatNumber(stats.queryCount))
+                    if let trend = stats.trend, let dir = trend.direction {
+                        let arrow = dir == "improving" ? " \u{25B2}" : (dir == "declining" ? " \u{25BC}" : "")
+                        InfoRow(label: "Trend", value: "\(dir.capitalized)\(arrow)")
                     }
                 } else if pollingManager.serverState.isRunning {
                     ProgressView("Loading...")
@@ -221,24 +333,57 @@ struct LearningTab: View {
                         .padding(.top, 20)
                 }
 
+                // Edge statistics
                 if let learning = pollingManager.learningStatsData {
                     Divider().padding(.vertical, 2)
+                    SectionHeader("Edge Statistics")
                     if let total = learning.totalEdges {
-                        InfoRow(label: "Total Edges", value: Formatting.formatNumber(Int(total)))
+                        InfoRow(label: "  Total Edges", value: Formatting.formatNumber(Int(total)))
+                    }
+                    if let strong = learning.strongEdges {
+                        InfoRow(label: "  Strong Edges", value: Formatting.formatNumber(Int(strong)))
+                    }
+                    if let surprising = learning.surprisingEdges {
+                        InfoRow(label: "  Surprising", value: Formatting.formatNumber(Int(surprising)))
+                    }
+                    if let below = learning.edgesBelowThreshold {
+                        InfoRow(label: "  Below Threshold", value: Formatting.formatNumber(Int(below)))
                     }
                     if let avg = learning.avgWeight {
-                        InfoRow(label: "Avg Weight", value: String(format: "%.4f", avg))
+                        InfoRow(label: "  Avg Weight", value: String(format: "%.3f", avg))
                     }
+                    if let max = learning.maxWeight {
+                        InfoRow(label: "  Max Weight", value: String(format: "%.3f", max))
+                    }
+                    if let avgDays = learning.avgDaysSinceActive {
+                        InfoRow(label: "  Avg Days Inactive", value: String(format: "%.1f", avgDays))
+                    }
+
+                    // Configuration
+                    Divider().padding(.vertical, 2)
+                    SectionHeader("Configuration")
+                    if let decay = learning.decayPerDay {
+                        InfoRow(label: "  Decay/Day", value: String(format: "%.2f", decay))
+                    }
+                    if let prune = learning.pruneThreshold {
+                        InfoRow(label: "  Prune Threshold", value: String(format: "%.2f", prune))
+                    }
+                    if let maxEdges = learning.maxEdgesPerNode {
+                        InfoRow(label: "  Max Edges/Node", value: "\(maxEdges)")
+                    }
+
+                    // Freeze state
                     if let freeze = learning.freezeState {
                         Divider().padding(.vertical, 2)
-                        InfoRow(label: "Frozen", value: freeze.frozen ? "Yes" : "No")
+                        SectionHeader("Freeze State")
+                        InfoRow(label: "  Frozen", value: freeze.frozen ? "Yes" : "No")
                         if let reason = freeze.reason {
-                            InfoRow(label: "Reason", value: reason)
+                            InfoRow(label: "  Reason", value: reason)
                         }
                     }
                 }
 
-                if !pollingManager.serverState.isRunning {
+                if !pollingManager.serverState.isRunning && pollingManager.distributionData == nil {
                     Text("Server not running")
                         .foregroundColor(.secondary)
                         .padding(.top, 20)
@@ -256,7 +401,7 @@ struct Neo4jTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 if let neo4j = pollingManager.neo4jHealth {
                     InfoRow(label: "Status", value: neo4j.database.status.capitalized)
                     InfoRow(label: "Version", value: neo4j.database.version)
@@ -265,23 +410,28 @@ struct Neo4jTab: View {
                     InfoRow(label: "Total Edges", value: Formatting.formatNumber(Int(neo4j.database.totalEdges)))
                     InfoRow(label: "Spaces", value: "\(neo4j.database.totalSpaces)")
 
+                    // Per-space breakdown
                     if !neo4j.spaces.isEmpty {
                         Divider().padding(.vertical, 2)
-                        Text("Spaces")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        SectionHeader("Spaces")
                         ForEach(neo4j.spaces, id: \.spaceId) { space in
                             InfoRow(label: "  \(space.spaceId)", value: "\(Formatting.formatNumber(Int(space.nodeCount))) nodes")
                         }
                     }
 
+                    // Connection Pool
                     if let pool = pollingManager.poolMetricsData {
                         Divider().padding(.vertical, 2)
-                        Text("Connection Pool")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        InfoRow(label: "Active", value: "\(pool.connectionPool.activeConnections)")
-                        InfoRow(label: "Idle", value: "\(pool.connectionPool.idleConnections)")
+                        SectionHeader("Connection Pool")
+                        InfoRow(label: "  Active", value: "\(pool.connectionPool.activeConnections)")
+                        InfoRow(label: "  Idle", value: "\(pool.connectionPool.idleConnections)")
+
+                        // Runtime metrics
+                        Divider().padding(.vertical, 2)
+                        SectionHeader("Runtime")
+                        InfoRow(label: "  Goroutines", value: "\(pool.runtime.goroutines)")
+                        InfoRow(label: "  Heap", value: String(format: "%.1f MB", pool.runtime.heapAllocMb))
+                        InfoRow(label: "  GC Pauses", value: String(format: "%.1f ms", pool.runtime.gcTotalPauseMs))
                     }
                 } else if pollingManager.serverState.isRunning {
                     ProgressView("Loading...")
@@ -298,7 +448,229 @@ struct Neo4jTab: View {
     }
 }
 
-// MARK: - Reusable Info Row
+// MARK: - Config Tab
+
+struct ConfigTab: View {
+    @EnvironmentObject var pollingManager: PollingManager
+    @State private var actionMessage: String?
+    @State private var showBackupConfirm = false
+    @State private var showMigrateConfirm = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                // Connection info
+                InfoRow(label: "Endpoint", value: pollingManager.client.baseURL.absoluteString)
+                InfoRow(label: "Space", value: pollingManager.spaceId)
+                if let pid = pollingManager.serverState.pid {
+                    InfoRow(label: "PID", value: "\(pid)")
+                }
+                if let version = pollingManager.readinessData?.version {
+                    InfoRow(label: "Version", value: version)
+                }
+
+                Divider().padding(.vertical, 2)
+
+                // Config from CLI
+                if let config = pollingManager.configData {
+                    SectionHeader("Server Configuration")
+                    ForEach(config, id: \.self) { row in
+                        if let key = row["key"], let value = row["value"] {
+                            InfoRow(label: key, value: value)
+                        }
+                    }
+                } else {
+                    HStack {
+                        Spacer()
+                        Button("Load Config") {
+                            pollingManager.fetchConfig()
+                        }
+                        .controlSize(.small)
+                        Spacer()
+                    }
+                    .padding(.top, 8)
+                }
+
+                Divider().padding(.vertical, 2)
+
+                // Database management
+                SectionHeader("Database")
+
+                HStack(spacing: 8) {
+                    Button("Backup") { showBackupConfirm = true }
+                        .controlSize(.small)
+                        .disabled(!pollingManager.serverState.isReachable)
+                        .alert("Trigger Backup?", isPresented: $showBackupConfirm) {
+                            Button("Cancel", role: .cancel) {}
+                            Button("Backup") { triggerBackup() }
+                        } message: {
+                            Text("Create a backup of space \"\(pollingManager.spaceId)\".")
+                        }
+
+                    Button("Migrate") { showMigrateConfirm = true }
+                        .controlSize(.small)
+                        .alert("Run Migrations?", isPresented: $showMigrateConfirm) {
+                            Button("Cancel", role: .cancel) {}
+                            Button("Migrate") { runMigrate() }
+                        } message: {
+                            Text("Apply pending database schema migrations.")
+                        }
+                }
+
+                if let msg = actionMessage {
+                    Text(msg)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 2)
+                }
+
+                Divider().padding(.vertical, 2)
+
+                // Quick actions
+                HStack(spacing: 8) {
+                    Button("Edit Config") {
+                        let url = pollingManager.discovery.configFilePath()
+                        NSWorkspace.shared.open(url)
+                    }
+                    .controlSize(.small)
+
+                    Button("Refresh") {
+                        pollingManager.fetchConfig()
+                    }
+                    .controlSize(.small)
+                }
+                .padding(.top, 4)
+            }
+            .padding(12)
+        }
+        .onAppear {
+            if pollingManager.configData == nil {
+                pollingManager.fetchConfig()
+            }
+        }
+    }
+
+    private func triggerBackup() {
+        Task {
+            do {
+                try await pollingManager.triggerBackup()
+                actionMessage = "Backup triggered successfully"
+            } catch {
+                actionMessage = "Backup failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func runMigrate() {
+        Task {
+            do {
+                let output = try await pollingManager.runMigration()
+                actionMessage = output.isEmpty ? "Migration complete" : output
+            } catch {
+                actionMessage = "Migration failed: \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+// MARK: - Log Tab
+
+struct LogTab: View {
+    @EnvironmentObject var pollingManager: PollingManager
+    @State private var searchText = ""
+
+    var filteredLines: [String] {
+        if searchText.isEmpty {
+            return pollingManager.logLines
+        }
+        return pollingManager.logLines.filter {
+            $0.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Search bar
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
+                TextField("Filter logs...", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.caption)
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Button(action: { pollingManager.refreshLogs() }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .help("Refresh logs")
+
+                Button(action: { pollingManager.openLogs() }) {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .help("Open in editor")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+
+            Divider()
+
+            // Log content
+            if pollingManager.logLines.isEmpty {
+                Spacer()
+                Text("No log data")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 1) {
+                            ForEach(Array(filteredLines.enumerated()), id: \.offset) { index, line in
+                                Text(line)
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundColor(logColor(for: line))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .id(index)
+                            }
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                    }
+                    .onChange(of: pollingManager.logLines.count) { _ in
+                        if let last = filteredLines.indices.last {
+                            proxy.scrollTo(last, anchor: .bottom)
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear {
+            pollingManager.refreshLogs()
+        }
+    }
+
+    private func logColor(for line: String) -> Color {
+        if line.contains("level=error") || line.contains("ERROR") {
+            return .red
+        } else if line.contains("level=warn") || line.contains("WARN") {
+            return .yellow
+        }
+        return .primary
+    }
+}
+
+// MARK: - Reusable Components
 
 struct InfoRow: View {
     let label: String
@@ -316,5 +688,20 @@ struct InfoRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
+    }
+}
+
+struct SectionHeader: View {
+    let title: String
+
+    init(_ title: String) {
+        self.title = title
+    }
+
+    var body: some View {
+        Text(title)
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .padding(.top, 2)
     }
 }

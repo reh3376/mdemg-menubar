@@ -82,6 +82,53 @@ final class CLIExecutor {
         return try await execute(arguments: args)
     }
 
+    /// Show the MDEMG configuration as JSON.
+    ///
+    /// Runs `mdemg config show --json`.
+    ///
+    /// - Returns: The JSON output from the command.
+    func configShow() async throws -> String {
+        try await execute(arguments: ["config", "show", "--json"])
+    }
+
+    /// Run database migrations.
+    ///
+    /// Runs `mdemg db migrate`.
+    ///
+    /// - Returns: The stdout output from the command.
+    func dbMigrate() async throws -> String {
+        try await execute(arguments: ["db", "migrate"])
+    }
+
+    /// Get Neo4j container uptime by inspecting the Docker container start time.
+    ///
+    /// Runs `docker inspect --format '{{.State.StartedAt}}' mdemg-neo4j-dev`.
+    ///
+    /// - Returns: The time interval since the container started, or nil if not running.
+    func neo4jContainerUptime() async -> TimeInterval? {
+        do {
+            let output = try await executeRaw(
+                executablePath: "/usr/local/bin/docker",
+                arguments: ["inspect", "--format", "{{.State.StartedAt}}", "mdemg-neo4j-dev"]
+            )
+            let dateStr = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = formatter.date(from: dateStr) {
+                return Date().timeIntervalSince(date)
+            }
+            // Try without fractional seconds
+            formatter.formatOptions = [.withInternetDateTime]
+            if let date = formatter.date(from: dateStr) {
+                return Date().timeIntervalSince(date)
+            }
+            return nil
+        } catch {
+            // Docker not available or container not running
+            return nil
+        }
+    }
+
     // MARK: - Private Execution
 
     /// Execute the mdemg binary with the given arguments.
@@ -125,6 +172,70 @@ final class CLIExecutor {
                 let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
                 let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
 
+                let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+                let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+
+                if process.terminationStatus != 0 {
+                    let message = stderr.isEmpty ? stdout : stderr
+                    continuation.resume(
+                        throwing: CLIError.executionFailed(
+                            message.trimmingCharacters(in: .whitespacesAndNewlines)
+                        )
+                    )
+                } else {
+                    continuation.resume(
+                        returning: stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                    )
+                }
+            }
+        }
+    }
+
+    /// Execute an arbitrary binary with the given arguments.
+    ///
+    /// Unlike `execute(arguments:)`, this allows specifying any executable path.
+    private func executeRaw(executablePath: String, arguments: [String]) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+
+                // Try the provided path first; fall back to Homebrew path for docker
+                let fm = FileManager.default
+                if fm.isExecutableFile(atPath: executablePath) {
+                    process.executableURL = URL(fileURLWithPath: executablePath)
+                } else if fm.isExecutableFile(atPath: "/opt/homebrew/bin/docker") {
+                    process.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/docker")
+                } else {
+                    continuation.resume(throwing: CLIError.executionFailed("docker not found"))
+                    return
+                }
+
+                process.arguments = arguments
+
+                var env = ProcessInfo.processInfo.environment
+                if let path = env["PATH"] {
+                    if !path.contains("/opt/homebrew/bin") {
+                        env["PATH"] = "/opt/homebrew/bin:" + path
+                    }
+                }
+                process.environment = env
+
+                let stdoutPipe = Pipe()
+                let stderrPipe = Pipe()
+                process.standardOutput = stdoutPipe
+                process.standardError = stderrPipe
+
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(throwing: CLIError.executionFailed(error.localizedDescription))
+                    return
+                }
+
+                process.waitUntilExit()
+
+                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
                 let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
                 let stderr = String(data: stderrData, encoding: .utf8) ?? ""
 

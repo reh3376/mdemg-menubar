@@ -4,11 +4,16 @@ macOS menu bar companion app for the [MDEMG](https://github.com/reh3376/mdemg) c
 
 ## Features
 
-- **Status icon** — green/yellow/red/gray circle in the menu bar showing server health
-- **Popover dashboard** — click the icon to see status, port, uptime, node count, Neo4j and embedding status
-- **Lifecycle controls** — Start, Stop, Restart the MDEMG server directly from the menu bar
+- **Status icon** — programmatic green/yellow/red/gray circle in the menu bar showing server health
+- **6-tab popover dashboard** — Status, Memory, Learning, Neo4j, Config, and Logs
+- **Status tab** — comprehensive subsystem health (Neo4j, server, embedding, plugins, circuit breakers, CMS), model inventory (embedding/naming/summary/reranker), service uptimes, and lifecycle controls (Start/Stop/Restart)
+- **Memory tab** — graph composition by layer (L0-L5), temporal activity (24h/7d/30d), connectivity metrics, learning edge stats
+- **Learning tab** — Hebbian learning phase and trend, edge breakdown (strong/surprising/below threshold), configuration, freeze state
+- **Neo4j tab** — database health, per-space node counts, connection pool, Go runtime metrics
+- **Config tab** — server configuration viewer, database backup/migrate, version display
+- **Logs tab** — live log viewer with search/filter and open-in-editor
 - **Auto-discovery** — reads `.mdemg.port` and `.mdemg/mdemg.pid` to find the running server
-- **Configurable polling** — 10s health checks, 30s stats refresh, exponential backoff on failure
+- **Configurable polling** — 10s health checks with `/healthz` + `/readyz`, 30s stats refresh, exponential backoff on failure
 - **Launch at Login** — optional auto-start via macOS Login Items
 
 ## Requirements
@@ -49,11 +54,12 @@ xcodebuild -scheme MdemgMenuBarTests -configuration Debug test
 
 The app communicates with the MDEMG server exclusively via:
 
-1. **HTTP REST** — all monitoring endpoints (`/healthz`, `/v1/neo4j/overview`, `/v1/embedding/health`, etc.)
-2. **CLI subprocess** — lifecycle commands only (`mdemg start/stop/restart`)
-3. **File reads** — PID file, port file, log file
+1. **HTTP REST** — monitoring endpoints (`/healthz`, `/readyz`, `/v1/neo4j/overview`, `/v1/embedding/health`, `/v1/memory/stats`, `/v1/learning/stats`, `/v1/memory/distribution`, `/v1/system/pool-metrics`)
+2. **CLI subprocess** — lifecycle commands (`mdemg start/stop/restart`) and config (`mdemg config show --json`)
+3. **Docker inspect** — Neo4j container uptime via `docker inspect`
+4. **File reads** — PID file, port file, log file
 
-No Go packages are linked. The app is a thin monitoring shell around the existing 97+ REST API endpoints.
+No Go packages are linked. The app is a thin monitoring shell around the existing REST API endpoints.
 
 ## Server Discovery
 

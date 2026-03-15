@@ -2,6 +2,18 @@ import Foundation
 
 // MARK: - Response Types
 
+struct ReadinessResponse: Codable {
+    let status: String  // "ready", "degraded", "not_ready"
+    let checks: [String: SubsystemCheck]
+    let version: String
+
+    struct SubsystemCheck: Codable {
+        let status: String
+        let message: String?
+        let latency: String?
+    }
+}
+
 struct EmbeddingHealthResponse: Codable {
     let status: String                // "healthy", "degraded", "unhealthy"
     let provider: String
@@ -88,6 +100,16 @@ struct MemoryStats: Codable {
         let last24h: Int64
         let last7d: Int64
         let last30d: Int64
+
+        // convertFromSnakeCase converts "last_24h" → "last24H" (capital H)
+        // because .capitalized treats digit→letter transitions as word boundaries.
+        // Custom decoder to handle this edge case.
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: DynamicCodingKey.self)
+            last24h = try container.decode(Int64.self, forKey: .init("last24H"))
+            last7d = try container.decode(Int64.self, forKey: .init("last7D"))
+            last30d = try container.decode(Int64.self, forKey: .init("last30D"))
+        }
     }
 
     struct Connectivity: Codable {
@@ -107,6 +129,10 @@ struct LearningStatsResponse: Codable {
     let avgWeight: Double?
     let maxWeight: Double?
     let minWeight: Double?
+    let strongEdges: Int64?
+    let surprisingEdges: Int64?
+    let edgesBelowThreshold: Int64?
+    let avgDaysSinceActive: Double?
 
     struct FreezeState: Codable {
         let frozen: Bool
@@ -128,6 +154,10 @@ struct LearningStatsResponse: Codable {
         avgWeight = try container.decodeIfPresent(Double.self, forKey: .init("avgWeight"))
         maxWeight = try container.decodeIfPresent(Double.self, forKey: .init("maxWeight"))
         minWeight = try container.decodeIfPresent(Double.self, forKey: .init("minWeight"))
+        strongEdges = try container.decodeIfPresent(Int64.self, forKey: .init("strongEdges"))
+        surprisingEdges = try container.decodeIfPresent(Int64.self, forKey: .init("surprisingEdges"))
+        edgesBelowThreshold = try container.decodeIfPresent(Int64.self, forKey: .init("edgesBelowThreshold"))
+        avgDaysSinceActive = try container.decodeIfPresent(Double.self, forKey: .init("avgDaysSinceActive"))
     }
 }
 
@@ -399,6 +429,11 @@ final class MdemgClient {
         } catch {
             return false
         }
+    }
+
+    /// GET /readyz -- per-subsystem readiness checks.
+    func readyz() async throws -> ReadinessResponse {
+        try await get("/readyz")
     }
 
     /// GET /v1/embedding/health -- embedding provider status and latency.

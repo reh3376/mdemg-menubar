@@ -14,16 +14,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = statusItem?.button {
-            let image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "MDEMG Status")
-            image?.isTemplate = false
-            button.image = image
+            button.image = makeCircleImage(color: .systemGray)
             button.action = #selector(togglePopover)
             button.target = self
         }
 
         // Configure popover
         let contentView = StatusView().environmentObject(pollingManager)
-        popover.contentSize = NSSize(width: 360, height: 420)
+        popover.contentSize = NSSize(width: 375, height: 460)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: contentView)
         popover.delegate = self
@@ -64,16 +62,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func updateIcon(for status: ServerState.HealthStatus) {
         guard let button = statusItem?.button else { return }
-        let image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "MDEMG Status")
-        image?.isTemplate = false
-        button.image = image
-
         let color: NSColor = switch status {
         case .healthy: .systemGreen
         case .degraded: .systemYellow
         case .stopped: .systemRed
         case .unknown: .systemGray
         }
-        button.contentTintColor = color
+        button.image = makeCircleImage(color: color)
+    }
+
+    /// Draw a colored circle as an NSImage for the menu bar icon.
+    ///
+    /// Using programmatic drawing instead of SF Symbol + contentTintColor
+    /// because `contentTintColor` on `circle.fill` with `isTemplate = false`
+    /// renders as black on many macOS versions.
+    private func makeCircleImage(color: NSColor) -> NSImage {
+        let size = NSSize(width: 18, height: 18)
+        let image = NSImage(size: size, flipped: false) { rect in
+            color.setFill()
+            let circleDiameter: CGFloat = 10
+            let circleRect = NSRect(
+                x: (rect.width - circleDiameter) / 2,
+                y: (rect.height - circleDiameter) / 2,
+                width: circleDiameter,
+                height: circleDiameter
+            )
+            NSBezierPath(ovalIn: circleRect).fill()
+            return true
+        }
+        image.isTemplate = false
+        return image
     }
 }

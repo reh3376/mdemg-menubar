@@ -52,13 +52,17 @@ final class PollingManager: ObservableObject {
     // MARK: - Published State
 
     @Published var serverState = ServerState.initial
+    @Published var readinessData: ReadinessResponse?
     @Published var neo4jHealth: Neo4jHealth?
     @Published var embeddingHealthData: EmbeddingHealthResponse?
     @Published var memoryStatsData: MemoryStats?
     @Published var learningStatsData: LearningStatsResponse?
     @Published var distributionData: DistributionResponse?
     @Published var poolMetricsData: PoolMetricsResponse?
+    @Published var configData: [[String: String]]?
+    @Published var logLines: [String] = []
     @Published var isPopoverVisible: Bool = false
+    @Published var neo4jUptime: TimeInterval?
 
     // MARK: - Configuration
 
@@ -238,17 +242,39 @@ final class PollingManager: ObservableObject {
                     state.healthStatus = .degraded
                 }
 
+                // Fetch readiness data for subsystem health
+                do {
+                    let readiness = try await client.readyz()
+                    self.readinessData = readiness
+                    // Override health status based on readiness
+                    if readiness.status == "degraded" {
+                        state.healthStatus = .degraded
+                    }
+                } catch {
+                    // Non-fatal: readyz may not be available on older servers
+                }
+
+                // Fetch Neo4j container uptime
+                let uptime = await cliExecutor.neo4jContainerUptime()
+                self.neo4jUptime = uptime
+
                 resetBackoff()
             } else if state.isRunning {
                 // PID alive but healthz failed
                 state.healthStatus = .degraded
+                self.readinessData = nil
+                self.neo4jUptime = nil
                 applyBackoff()
             } else if state.pid != nil {
                 // PID file exists but process dead
                 state.healthStatus = .stopped
+                self.readinessData = nil
+                self.neo4jUptime = nil
                 applyBackoff()
             } else {
                 state.healthStatus = .unknown
+                self.readinessData = nil
+                self.neo4jUptime = nil
                 applyBackoff()
             }
 
@@ -287,7 +313,7 @@ final class PollingManager: ObservableObject {
                 let stats = try await client.memoryStats(spaceId: spaceId)
                 self.memoryStatsData = stats
             } catch {
-                // Non-fatal
+                print("[PollingManager] memory stats error: \(error)")
             }
 
             // Fetch learning stats
@@ -307,7 +333,95 @@ final class PollingManager: ObservableObject {
                 let pool = try await client.poolMetrics()
                 self.poolMetricsData = pool
             } catch {}
+
+            // Auto-fetch config if not yet loaded
+            if self.configData == nil {
+                fetchConfig()
+            }
         }
+    }
+
+    /// Look up a config value by key from the cached config data.
+    ///
+    /// - Parameter key: The config key to search for (case-insensitive substring match).
+    /// - Returns: The config value if found, or nil.
+    func configValue(for key: String) -> String? {
+        guard let config = configData else { return nil }
+        let lowerKey = key.lowercased()
+        for row in config {
+            if let k = row["key"], k.lowercased().contains(lowerKey),
+               let v = row["value"] {
+                return v
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Config Fetching
+
+    /// Fetch the MDEMG server configuration via CLI.
+    ///
+    /// Parses the JSON output of `mdemg config show --json` into a list
+    /// of key-value pairs grouped for display.
+    func fetchConfig() {
+        Task {
+            do {
+                let json = try await cliExecutor.configShow()
+                guard let data = json.data(using: .utf8),
+                      let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    return
+                }
+                var rows: [[String: String]] = []
+                for (key, value) in dict.sorted(by: { $0.key < $1.key }) {
+                    rows.append(["key": key, "value": "\(value)"])
+                }
+                self.configData = rows
+            } catch {
+                print("[PollingManager] config fetch error: \(error)")
+            }
+        }
+    }
+
+    // MARK: - Log Viewer
+
+    /// Read the last N lines from the MDEMG log file.
+    ///
+    /// Reads the entire file and returns the tail. For large files this could
+    /// be optimized with seek-from-end, but log files are typically small.
+    func refreshLogs(maxLines: Int = 200) {
+        Task.detached { [discovery] in
+            let url = discovery.logFilePath()
+            guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
+                await MainActor.run { self.logLines = ["Log file not found: \(url.path)"] }
+                return
+            }
+            let allLines = contents.components(separatedBy: .newlines)
+            let tail = Array(allLines.suffix(maxLines))
+            await MainActor.run { self.logLines = tail }
+        }
+    }
+
+    // MARK: - Database Management
+
+    /// Trigger a database backup via the REST API.
+    func triggerBackup() async throws {
+        let url = client.baseURL.appendingPathComponent("/v1/backup/trigger")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: ["space_id": spaceId]
+        )
+        let (_, response) = try await client.session.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              (200...299).contains(http.statusCode) else {
+            throw MdemgClientError.invalidResponse
+        }
+    }
+
+    /// Run database migration via CLI.
+    func runMigration() async throws -> String {
+        try await cliExecutor.dbMigrate()
     }
 
     // MARK: - Timer Scheduling

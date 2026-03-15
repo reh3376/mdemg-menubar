@@ -16,6 +16,19 @@ enum Formatting {
         return "\(h)h \(m)m"
     }
 
+    /// Format a time interval as "Xd HH:MM:ss" for uptime display.
+    static func formatUptimeDHMS(_ interval: TimeInterval) -> String {
+        let total = Int(interval)
+        let days = total / 86400
+        let hours = (total % 86400) / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        if days > 0 {
+            return String(format: "%dd %02d:%02d:%02d", days, hours, minutes, seconds)
+        }
+        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+    }
+
     static func formatNumber(_ n: Int) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
