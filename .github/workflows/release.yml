@@ -16,6 +16,13 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Stamp version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Stamping version: $VERSION"
+          plutil -replace CFBundleShortVersionString -string "$VERSION" MdemgMenuBar/Info.plist
+          plutil -replace CFBundleVersion -string "$VERSION" MdemgMenuBar/Info.plist
+
       - name: Generate Xcode Project
         run: xcodegen generate
 
