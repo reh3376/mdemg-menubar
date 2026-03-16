@@ -211,6 +211,52 @@ final class CLIExecutor {
         }
     }
 
+    // MARK: - Knowledge Export/Import
+
+    /// Export a space to a .mdemg file.
+    ///
+    /// Runs `mdemg space export --space-id <id> --profile <profile> --output <path>`.
+    ///
+    /// - Parameters:
+    ///   - spaceId: The space to export.
+    ///   - profile: Export profile (e.g., "shareable", "full").
+    ///   - outputPath: Destination file path.
+    /// - Returns: The stdout output from the command.
+    func exportSpace(spaceId: String, profile: String, outputPath: String) async throws -> String {
+        try await execute(arguments: [
+            "space", "export",
+            "--space-id", spaceId,
+            "--profile", profile,
+            "--output", outputPath,
+        ])
+    }
+
+    /// Import a .mdemg file into Neo4j.
+    ///
+    /// Runs `mdemg space import --input <path> [--consolidate] [--re-embed]`.
+    ///
+    /// - Parameters:
+    ///   - inputPath: Source .mdemg file path.
+    ///   - conflict: Conflict mode (default "skip").
+    ///   - consolidate: Run consolidation after import.
+    ///   - reEmbed: Re-generate embeddings after import.
+    /// - Returns: The stdout output from the command.
+    func importSpace(
+        inputPath: String,
+        conflict: String = "skip",
+        consolidate: Bool = false,
+        reEmbed: Bool = false
+    ) async throws -> String {
+        var args = ["space", "import", "--input", inputPath, "--conflict", conflict]
+        if consolidate {
+            args.append("--consolidate")
+        }
+        if reEmbed {
+            args.append("--re-embed")
+        }
+        return try await execute(arguments: args)
+    }
+
     // MARK: - Private Execution
 
     /// Execute the mdemg binary with the given arguments.

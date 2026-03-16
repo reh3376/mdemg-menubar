@@ -69,6 +69,13 @@ final class PollingManager: ObservableObject {
     @Published var neo4jMemoryMB: Int?
     @Published var neo4jCPUs: Double?
 
+    // MARK: - Export/Import State
+
+    /// Status text for export/import operations.
+    @Published var exportImportStatus: String = ""
+    /// Whether an export/import operation is currently running.
+    @Published var isExportImportRunning: Bool = false
+
     // MARK: - Multi-Instance State
 
     /// Health state for all registered instances, keyed by instance ID.
@@ -733,6 +740,50 @@ final class PollingManager: ObservableObject {
             self.learningStatsData = learning
         } catch {}
         return result
+    }
+
+    // MARK: - Knowledge Export/Import
+
+    /// Export a space to a .mdemg file.
+    func exportSpace(spaceId: String, profile: String, outputPath: String) {
+        isExportImportRunning = true
+        exportImportStatus = "Exporting..."
+        Task {
+            do {
+                let output = try await cliExecutor.exportSpace(
+                    spaceId: spaceId, profile: profile, outputPath: outputPath
+                )
+                self.exportImportStatus = "Export complete"
+                if !output.isEmpty {
+                    NSLog("Export output: \(output)")
+                }
+            } catch {
+                self.exportImportStatus = "Export failed: \(error.localizedDescription)"
+            }
+            self.isExportImportRunning = false
+        }
+    }
+
+    /// Import a .mdemg file into Neo4j.
+    func importSpace(inputPath: String, consolidate: Bool, reEmbed: Bool) {
+        isExportImportRunning = true
+        exportImportStatus = "Importing..."
+        Task {
+            do {
+                let output = try await cliExecutor.importSpace(
+                    inputPath: inputPath, consolidate: consolidate, reEmbed: reEmbed
+                )
+                self.exportImportStatus = "Import complete"
+                if !output.isEmpty {
+                    NSLog("Import output: \(output)")
+                }
+                // Refresh stats after import
+                pollStats()
+            } catch {
+                self.exportImportStatus = "Import failed: \(error.localizedDescription)"
+            }
+            self.isExportImportRunning = false
+        }
     }
 
     deinit {

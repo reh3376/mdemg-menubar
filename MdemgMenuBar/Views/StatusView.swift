@@ -367,6 +367,9 @@ struct MemoryStatsTab: View {
                             )
                         }
                     }
+
+                    // Knowledge Sharing
+                    KnowledgeSharingSection()
                 } else if pollingManager.serverState.isRunning {
                     HStack {
                         Spacer()
@@ -918,5 +921,113 @@ struct SectionHeader: View {
             .font(.caption)
             .foregroundColor(.secondary)
             .padding(.top, 2)
+    }
+}
+
+// MARK: - Knowledge Sharing Section
+
+struct KnowledgeSharingSection: View {
+    @EnvironmentObject var pollingManager: PollingManager
+
+    private let profiles = ["shareable", "cms", "full", "learned", "metadata"]
+
+    @State private var selectedProfile = "shareable"
+    @State private var selectedSpace = "mdemg-dev"
+    @State private var reEmbedOnImport = false
+    @State private var consolidateOnImport = false
+
+    var body: some View {
+        Divider().padding(.vertical, 2)
+        SectionHeader("Knowledge Sharing")
+
+        // Profile picker
+        HStack {
+            Text("  Profile")
+                .font(.system(size: 11))
+            Spacer()
+            Picker("", selection: $selectedProfile) {
+                ForEach(profiles, id: \.self) { profile in
+                    Text(profile).tag(profile)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 120)
+        }
+
+        // Space picker (from available spaces)
+        if let spaces = pollingManager.spacesData, !spaces.isEmpty {
+            HStack {
+                Text("  Space")
+                    .font(.system(size: 11))
+                Spacer()
+                Picker("", selection: $selectedSpace) {
+                    ForEach(spaces, id: \.spaceId) { space in
+                        Text(space.spaceId).tag(space.spaceId)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 120)
+            }
+        }
+
+        // Export / Import buttons
+        HStack(spacing: 8) {
+            Button("Export Knowledge...") {
+                exportKnowledge()
+            }
+            .controlSize(.small)
+            .disabled(pollingManager.isExportImportRunning)
+
+            Button("Import...") {
+                importKnowledge()
+            }
+            .controlSize(.small)
+            .disabled(pollingManager.isExportImportRunning)
+        }
+        .padding(.leading, 8)
+        .padding(.top, 4)
+
+        // Import options
+        Toggle("  Re-embed on import", isOn: $reEmbedOnImport)
+            .toggleStyle(.checkbox)
+            .font(.system(size: 11))
+        Toggle("  Consolidate after import", isOn: $consolidateOnImport)
+            .toggleStyle(.checkbox)
+            .font(.system(size: 11))
+
+        // Status
+        if !pollingManager.exportImportStatus.isEmpty {
+            InfoRow(label: "  Status", value: pollingManager.exportImportStatus)
+        }
+    }
+
+    private func exportKnowledge() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.data]
+        panel.nameFieldStringValue = "\(selectedSpace)-\(selectedProfile).mdemg"
+        panel.title = "Export Knowledge"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        pollingManager.exportSpace(
+            spaceId: selectedSpace,
+            profile: selectedProfile,
+            outputPath: url.path
+        )
+    }
+
+    private func importKnowledge() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.data]
+        panel.allowsMultipleSelection = false
+        panel.title = "Import Knowledge"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        pollingManager.importSpace(
+            inputPath: url.path,
+            consolidate: consolidateOnImport,
+            reEmbed: reEmbedOnImport
+        )
     }
 }
