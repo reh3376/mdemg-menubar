@@ -50,15 +50,16 @@ final class ServerDiscoveryTests: XCTestCase {
     }
 
     func testResolveEndpointFallback() {
+        // No port file or server evidence in temp dir → resolveEndpoint returns nil
         let discovery = ServerDiscovery(projectDirectory: tempDir)
         let endpoint = discovery.resolveEndpoint()
-        XCTAssertEqual(endpoint.absoluteString, "http://localhost:9999")
+        XCTAssertNil(endpoint)
     }
 
     func testResolveEndpointWithOverride() {
         let discovery = ServerDiscovery(projectDirectory: tempDir)
         let endpoint = discovery.resolveEndpoint(preferenceOverride: "http://myhost:8888")
-        XCTAssertEqual(endpoint.absoluteString, "http://myhost:8888")
+        XCTAssertEqual(endpoint?.absoluteString, "http://myhost:8888")
     }
 
     func testResolveEndpointFromPortFile() throws {
@@ -67,6 +68,6 @@ final class ServerDiscoveryTests: XCTestCase {
 
         let discovery = ServerDiscovery(projectDirectory: tempDir)
         let endpoint = discovery.resolveEndpoint()
-        XCTAssertEqual(endpoint.absoluteString, "http://localhost:8080")
+        XCTAssertEqual(endpoint?.absoluteString, "http://localhost:8080")
     }
 }

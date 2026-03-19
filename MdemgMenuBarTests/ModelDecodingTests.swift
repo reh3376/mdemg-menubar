@@ -45,14 +45,68 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(result.totalNodes, 34416)
     }
 
-    func testRSICStatusDecoding() throws {
+    func testRSICHealthFullDecoding() throws {
+        let json = """
+        {"status":"ok","active_tasks":2,"watchdog":{"decay_score":0.85,"escalation_level":1,"last_cycle_time":"2026-03-18T10:00:00Z","next_due":"2026-03-18T10:30:00Z","space_id":"mdemg-dev","session_health_score":0.92,"obs_rate_per_hour":12.5,"active_anomalies":["stale_edges"],"consolidation_age_sec":3600,"last_trigger_source":"watchdog"},"orchestration":{"micro_enabled":true,"meso_period_sessions":5},"persistence":{"enabled":true,"dirty_keys":3,"flush_errors":0,"last_flush":"2026-03-18T09:55:00Z"},"safety":{"enforcement_active":true,"safety_version":"1.0","bounds":{"max_nodes_affected":100,"max_edges_affected":200,"protected_spaces":["mdemg-dev"]},"rollback":{"window_sec":3600,"snapshots_held":5,"oldest_snapshot_age_sec":1800.5}}}
+        """.data(using: .utf8)!
+
+        let result = try decoder.decode(RSICHealthResponse.self, from: json)
+        XCTAssertEqual(result.status, "ok")
+        XCTAssertEqual(result.activeTasks, 2)
+        XCTAssertEqual(result.watchdog?.escalationLevel, 1)
+        XCTAssertEqual(result.watchdog!.decayScore!, 0.85, accuracy: 0.001)
+        XCTAssertEqual(result.watchdog!.obsRatePerHour!, 12.5, accuracy: 0.1)
+        XCTAssertEqual(result.watchdog?.activeAnomalies, ["stale_edges"])
+        XCTAssertEqual(result.persistence?.enabled, true)
+        XCTAssertEqual(result.persistence?.dirtyKeys, 3)
+        XCTAssertEqual(result.safety?.enforcementActive, true)
+        XCTAssertEqual(result.safety?.bounds?.maxNodesAffected, 100)
+        XCTAssertEqual(result.safety?.rollback?.snapshotsHeld, 5)
+    }
+
+    func testRSICHealthMinimalDecoding() throws {
         let json = """
         {"status":"ok","active_tasks":0}
         """.data(using: .utf8)!
 
-        let result = try decoder.decode(RSICStatus.self, from: json)
+        let result = try decoder.decode(RSICHealthResponse.self, from: json)
         XCTAssertEqual(result.status, "ok")
         XCTAssertEqual(result.activeTasks, 0)
+        XCTAssertNil(result.watchdog)
+        XCTAssertNil(result.orchestration)
+        XCTAssertNil(result.persistence)
+        XCTAssertNil(result.safety)
+    }
+
+    func testRSICHistoryDecoding() throws {
+        let json = """
+        {"history":[{"cycle_id":"c-001","tier":"meso","space_id":"mdemg-dev","started_at":"2026-03-18T10:00:00Z","completed_at":"2026-03-18T10:00:05Z","actions_executed":3,"success_count":2,"failed_count":1,"metrics_before":{"retrieval":0.7},"metrics_after":{"retrieval":0.75},"trigger_source":"watchdog","dry_run":false,"criteria_met":true}],"count":1}
+        """.data(using: .utf8)!
+
+        let result = try decoder.decode(RSICHistoryResponse.self, from: json)
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result.history.count, 1)
+        let cycle = result.history[0]
+        XCTAssertEqual(cycle.cycleId, "c-001")
+        XCTAssertEqual(cycle.tier, "meso")
+        XCTAssertEqual(cycle.actionsExecuted, 3)
+        XCTAssertEqual(cycle.successCount, 2)
+        XCTAssertEqual(cycle.failedCount, 1)
+        XCTAssertEqual(cycle.criteriaMet, true)
+        XCTAssertEqual(cycle.metricsBefore!["retrieval"]!, 0.7, accuracy: 0.001)
+        XCTAssertEqual(cycle.metricsAfter!["retrieval"]!, 0.75, accuracy: 0.001)
+    }
+
+    func testRSICCalibrationDecoding() throws {
+        let json = """
+        {"calibration":{"prune_edges":0.85,"decay_edges":0.72,"consolidate":0.91}}
+        """.data(using: .utf8)!
+
+        let result = try decoder.decode(RSICCalibrationResponse.self, from: json)
+        XCTAssertEqual(result.calibration.count, 3)
+        XCTAssertEqual(result.calibration["prune_edges"]!, 0.85, accuracy: 0.001)
+        XCTAssertEqual(result.calibration["decay_edges"]!, 0.72, accuracy: 0.001)
+        XCTAssertEqual(result.calibration["consolidate"]!, 0.91, accuracy: 0.001)
     }
 
     func testSpaceInfoDecoding() throws {

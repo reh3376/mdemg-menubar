@@ -5,7 +5,7 @@ import Foundation
 /// Persisted as JSON in `instances.json` within Application Support.
 /// Shared between the Swift menubar app and the Go CLI (`mdemg init`).
 struct MdemgInstance: Codable, Identifiable, Equatable {
-    /// Unique identifier. UUID string from Swift, nanosecond timestamp from Go CLI.
+    /// Unique identifier. CUIDv2 from Swift, nanosecond timestamp from Go CLI.
     let id: String
     /// Display label shown in the instance picker (typically the directory name).
     var name: String
@@ -26,7 +26,7 @@ struct MdemgInstance: Codable, Identifiable, Equatable {
         case cliInit
     }
 
-    /// Create a new instance with a generated UUID.
+    /// Create a new instance with a generated CUIDv2.
     static func create(
         name: String,
         projectDirectory: String,
@@ -35,7 +35,7 @@ struct MdemgInstance: Codable, Identifiable, Equatable {
         source: RegistrationSource = .manual
     ) -> MdemgInstance {
         MdemgInstance(
-            id: UUID().uuidString,
+            id: CUID2.generate(),
             name: name,
             projectDirectory: projectDirectory,
             serverURL: serverURL,

@@ -257,6 +257,34 @@ final class CLIExecutor {
         return try await execute(arguments: args)
     }
 
+    // MARK: - Teardown
+
+    /// Run instance teardown.
+    ///
+    /// Runs `mdemg teardown --yes --format json [--export] [--keep-data] [--full]`.
+    ///
+    /// - Parameters:
+    ///   - export: Export CMS data before teardown.
+    ///   - keepData: Preserve Neo4j volume.
+    ///   - full: Include system-level cleanup.
+    /// - Returns: The JSON output from the command.
+    func teardown(export: Bool = false, keepData: Bool = false, full: Bool = false) async throws -> String {
+        var args = ["teardown", "--yes", "--format", "json"]
+        if export { args.append("--export") }
+        if keepData { args.append("--keep-data") }
+        if full { args.append("--full") }
+        return try await execute(arguments: args)
+    }
+
+    /// Preview teardown without executing.
+    ///
+    /// Runs `mdemg teardown --dry-run --format json`.
+    ///
+    /// - Returns: The JSON preview output from the command.
+    func teardownDryRun() async throws -> String {
+        try await execute(arguments: ["teardown", "--dry-run", "--format", "json"])
+    }
+
     // MARK: - Private Execution
 
     /// Execute the mdemg binary with the given arguments.

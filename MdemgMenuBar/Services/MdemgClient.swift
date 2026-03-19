@@ -224,13 +224,110 @@ struct FreezeStatusResponse: Codable {
     let count: Int?
 }
 
-struct RSICStatus: Codable {
+// MARK: - RSIC Response Types
+
+struct RSICHealthResponse: Codable {
     let status: String
     let activeTasks: Int
-    let watchdog: [String: AnyCodable]?
+    let watchdog: RSICWatchdog?
     let orchestration: [String: AnyCodable]?
-    let persistence: [String: AnyCodable]?
-    let safety: [String: AnyCodable]?
+    let persistence: RSICPersistence?
+    let safety: RSICSafety?
+}
+
+struct RSICWatchdog: Codable {
+    let decayScore: Double?
+    let escalationLevel: Int?
+    let lastCycleTime: String?
+    let nextDue: String?
+    let spaceId: String?
+    let sessionHealthScore: Double?
+    let obsRatePerHour: Double?
+    let activeAnomalies: [String]?
+    let consolidationAgeSec: Int64?
+    let lastTriggerSource: String?
+}
+
+struct RSICPersistence: Codable {
+    let enabled: Bool?
+    let dirtyKeys: Int?
+    let flushErrors: Int?
+    let lastFlush: String?
+    let stateNodes: Int?
+}
+
+struct RSICSafety: Codable {
+    let enforcementActive: Bool?
+    let safetyVersion: String?
+    let bounds: RSICSafetyBounds?
+    let rollback: RSICSafetyRollback?
+}
+
+struct RSICSafetyBounds: Codable {
+    let maxNodesAffected: Int?
+    let maxEdgesAffected: Int?
+    let protectedSpaces: [String]?
+}
+
+struct RSICSafetyRollback: Codable {
+    let windowSec: Int?
+    let snapshotsHeld: Int?
+    let oldestSnapshotAgeSec: Double?
+}
+
+struct RSICHistoryResponse: Codable {
+    let history: [RSICCycleOutcome]
+    let count: Int
+}
+
+struct RSICCycleOutcome: Codable, Identifiable {
+    var id: String { cycleId }
+
+    let cycleId: String
+    let tier: String
+    let spaceId: String
+    let startedAt: String
+    let completedAt: String
+    let actionsExecuted: Int
+    let successCount: Int
+    let failedCount: Int
+    let metricsBefore: [String: Double]?
+    let metricsAfter: [String: Double]?
+    let calibrationDelta: [String: Double]?
+    let insights: [RSICInsight]?
+    let error: String?
+    let triggerSource: String?
+    let policyVersion: String?
+    let dryRun: Bool?
+    let safetyVersion: String?
+    let criteriaMet: Bool?
+    let criteriaDetail: [String: String]?
+    let deltas: [RSICActionDelta]?
+}
+
+struct RSICInsight: Codable {
+    let patternId: String?
+    let severity: String?
+    let description: String?
+    let recommendedAction: String?
+    let metric: String?
+    let value: Double?
+    let threshold: Double?
+}
+
+struct RSICActionDelta: Codable {
+    let action: String
+    let wouldExecute: Bool?
+    let estimatedAffected: Int?
+    let safetyLimit: Int?
+    let withinBounds: Bool?
+    let protectedSpaceBlocked: Bool?
+    let rejectionReason: String?
+    let note: String?
+}
+
+struct RSICCalibrationResponse: Codable {
+    let calibration: [String: Double]
 }
 
 struct PoolMetricsResponse: Codable {
@@ -281,6 +378,27 @@ struct PruneResponse: Codable {
     let decayedDeleted: Int
     let excessDeleted: Int
     let totalDeleted: Int
+}
+
+struct TeardownChange: Codable {
+    let path: String
+    let action: String
+    let backupPath: String?
+}
+
+struct TeardownReport: Codable {
+    let schemaVersion: String
+    let command: String
+    let timestamp: String
+    let result: String
+    let exitCode: Int
+    let changes: [TeardownChange]
+    let nextActions: [String]
+    let scope: String
+    let force: Bool
+    let keepData: Bool
+    let backupPath: String
+    let exportPath: String?
 }
 
 struct FreezeResponse: Codable {
@@ -491,8 +609,31 @@ final class MdemgClient {
     }
 
     /// GET /v1/self-improve/health -- RSIC self-improvement engine status.
-    func rsicHealth() async throws -> RSICStatus {
+    func rsicHealth() async throws -> RSICHealthResponse {
         try await get("/v1/self-improve/health")
+    }
+
+    /// GET /v1/self-improve/history -- recent RSIC cycle outcomes.
+    func rsicHistory(spaceId: String, limit: Int = 10) async throws -> RSICHistoryResponse {
+        try await get("/v1/self-improve/history", queryItems: [
+            URLQueryItem(name: "space_id", value: spaceId),
+            URLQueryItem(name: "limit", value: "\(limit)"),
+        ])
+    }
+
+    /// GET /v1/self-improve/calibration -- action calibration confidence map.
+    func rsicCalibration() async throws -> RSICCalibrationResponse {
+        try await get("/v1/self-improve/calibration")
+    }
+
+    /// POST /v1/self-improve/cycle -- trigger an RSIC cycle.
+    func rsicTriggerCycle(spaceId: String, tier: String, dryRun: Bool) async throws -> RSICCycleOutcome {
+        try await post("/v1/self-improve/cycle", body: [
+            "space_id": spaceId,
+            "tier": tier,
+            "dry_run": dryRun,
+            "trigger_source": "manual_api",
+        ] as [String: Any])
     }
 
     /// GET /v1/system/pool-metrics -- Neo4j connection pool and Go runtime metrics.

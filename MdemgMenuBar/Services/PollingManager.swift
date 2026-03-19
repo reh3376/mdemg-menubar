@@ -76,6 +76,21 @@ final class PollingManager: ObservableObject {
     /// Whether an export/import operation is currently running.
     @Published var isExportImportRunning: Bool = false
 
+    // MARK: - Teardown State
+
+    /// Status text for teardown operation.
+    @Published var teardownStatus: String = ""
+    /// Whether a teardown operation is currently running.
+    @Published var isTeardownRunning: Bool = false
+
+    // MARK: - RSIC State
+
+    @Published var rsicHealth: RSICHealthResponse?
+    @Published var rsicHistory: [RSICCycleOutcome] = []
+    @Published var rsicCalibration: [String: Double] = [:]
+    @Published var isRSICCycleRunning: Bool = false
+    @Published var rsicActionMessage: String?
+
     // MARK: - Multi-Instance State
 
     /// Health state for all registered instances, keyed by instance ID.
@@ -183,6 +198,10 @@ final class PollingManager: ObservableObject {
         neo4jMemoryMB = nil
         neo4jCPUs = nil
         logLines = []
+        rsicHealth = nil
+        rsicHistory = []
+        rsicCalibration = [:]
+        rsicActionMessage = nil
 
         // Reset backoff and poll immediately
         consecutiveFailures = 0
@@ -540,6 +559,15 @@ final class PollingManager: ObservableObject {
                 self.spacesData = spaces
             } catch {}
 
+            // Fetch RSIC health
+            do { rsicHealth = try await client.rsicHealth() } catch {}
+
+            // Fetch RSIC history
+            do { rsicHistory = try await client.rsicHistory(spaceId: spaceId, limit: 10).history } catch {}
+
+            // Fetch RSIC calibration
+            do { rsicCalibration = try await client.rsicCalibration().calibration } catch {}
+
             // Fetch config on every stats poll (values may change across instances)
             fetchConfig()
         }
@@ -742,6 +770,23 @@ final class PollingManager: ObservableObject {
         return result
     }
 
+    // MARK: - RSIC Actions
+
+    /// Trigger an RSIC self-improvement cycle.
+    func triggerRSICCycle(tier: String, dryRun: Bool) async throws -> RSICCycleOutcome {
+        isRSICCycleRunning = true
+        defer { isRSICCycleRunning = false }
+
+        let result = try await client.rsicTriggerCycle(spaceId: spaceId, tier: tier, dryRun: dryRun)
+
+        // Refresh RSIC data after cycle
+        do { rsicHealth = try await client.rsicHealth() } catch {}
+        do { rsicHistory = try await client.rsicHistory(spaceId: spaceId, limit: 10).history } catch {}
+        do { rsicCalibration = try await client.rsicCalibration().calibration } catch {}
+
+        return result
+    }
+
     // MARK: - Knowledge Export/Import
 
     /// Export a space to a .mdemg file.
@@ -784,6 +829,63 @@ final class PollingManager: ObservableObject {
             }
             self.isExportImportRunning = false
         }
+    }
+
+    // MARK: - Instance Teardown
+
+    /// Run teardown for the current instance, deregistering it on success.
+    func teardownCurrentInstance(export: Bool, keepData: Bool) {
+        isTeardownRunning = true
+        teardownStatus = "Tearing down..."
+        Task {
+            do {
+                let json = try await cliExecutor.teardown(export: export, keepData: keepData)
+                // Parse the report
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                if let data = json.data(using: .utf8),
+                   let report = try? decoder.decode(TeardownReport.self, from: data) {
+                    let changeCount = report.changes.count
+                    self.teardownStatus = "Teardown complete — \(changeCount) change(s)"
+                    NSLog("Teardown backup: \(report.backupPath)")
+                } else {
+                    self.teardownStatus = "Teardown complete"
+                }
+
+                // Deregister the instance from the store
+                if let selected = instanceStore.selectedInstance {
+                    instanceStore.remove(id: selected.id)
+                }
+
+                // Stop polling — server is gone
+                stopPolling()
+                self.serverState = .initial
+
+                // Switch to next available instance
+                if let next = instanceStore.instances.first {
+                    switchToInstance(next)
+                    startPolling()
+                }
+            } catch {
+                self.teardownStatus = "Teardown failed: \(error.localizedDescription)"
+            }
+            self.isTeardownRunning = false
+        }
+    }
+
+    /// Preview teardown (dry-run) for the current instance.
+    func teardownDryRun() async -> TeardownReport? {
+        do {
+            let json = try await cliExecutor.teardownDryRun()
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            if let data = json.data(using: .utf8) {
+                return try decoder.decode(TeardownReport.self, from: data)
+            }
+        } catch {
+            NSLog("Teardown dry-run failed: \(error)")
+        }
+        return nil
     }
 
     deinit {

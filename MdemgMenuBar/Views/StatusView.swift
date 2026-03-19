@@ -82,6 +82,11 @@ struct StatusView: View {
                     .environmentObject(pollingManager)
                     .tabItem { Label("Logs", systemImage: "doc.text") }
                     .tag(5)
+
+                RSICTab()
+                    .environmentObject(pollingManager)
+                    .tabItem { Label("RSIC", systemImage: "arrow.triangle.2.circlepath") }
+                    .tag(6)
             }
 
             // Footer timestamp
@@ -172,6 +177,7 @@ struct StatusView: View {
 
 struct OverviewTab: View {
     @EnvironmentObject var pollingManager: PollingManager
+    @State private var showTeardownConfirm = false
 
     var body: some View {
         let state = pollingManager.serverState
@@ -194,8 +200,43 @@ struct OverviewTab: View {
                         .disabled(!state.isRunning)
                     Button("Restart") { pollingManager.restartServer() }
                         .disabled(!state.isRunning)
+                    Spacer()
+                    Button("Teardown") {
+                        showTeardownConfirm = true
+                    }
+                    .foregroundColor(.red)
                 }
                 .controlSize(.small)
+                .confirmationDialog(
+                    "Teardown Instance",
+                    isPresented: $showTeardownConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Teardown", role: .destructive) {
+                        pollingManager.teardownCurrentInstance(export: false, keepData: false)
+                    }
+                    Button("Teardown + Export Data", role: .destructive) {
+                        pollingManager.teardownCurrentInstance(export: true, keepData: false)
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Permanently remove all MDEMG artifacts for this instance.\nA backup is created before removal.")
+                }
+
+                // Teardown status
+                if pollingManager.isTeardownRunning {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(pollingManager.teardownStatus)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else if !pollingManager.teardownStatus.isEmpty {
+                    Text(pollingManager.teardownStatus)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
             .padding(12)
         }
@@ -885,6 +926,339 @@ struct LogTab: View {
             return .yellow
         }
         return .primary
+    }
+}
+
+// MARK: - RSIC Tab
+
+struct RSICTab: View {
+    @EnvironmentObject var pollingManager: PollingManager
+    @State private var showCycleConfirm = false
+    @State private var dryRunToggle = true
+    @State private var selectedTier = "meso"
+    @State private var expandedCycleId: String?
+    @State private var actionMessage: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                if let health = pollingManager.rsicHealth {
+                    rsicHealthSection(health: health)
+
+                    if !pollingManager.rsicHistory.isEmpty {
+                        Divider().padding(.vertical, 2)
+                        recentCyclesSection()
+                    }
+
+                    if !pollingManager.rsicCalibration.isEmpty {
+                        Divider().padding(.vertical, 2)
+                        calibrationSection()
+                    }
+
+                    Divider().padding(.vertical, 2)
+                    actionsSection()
+                } else if pollingManager.serverState.isRunning {
+                    HStack {
+                        Spacer()
+                        ProgressView("Loading RSIC data...")
+                            .font(.caption)
+                        Spacer()
+                    }
+                    .padding(.top, 20)
+                } else {
+                    Text("Server not running")
+                        .foregroundColor(.secondary)
+                        .padding(.top, 20)
+                }
+            }
+            .padding(12)
+        }
+    }
+
+    // MARK: - Health Section
+
+    @ViewBuilder
+    private func rsicHealthSection(health: RSICHealthResponse) -> some View {
+        SectionHeader("RSIC Engine")
+        InfoRow(label: "Status", value: health.status)
+        InfoRow(label: "Active Tasks", value: "\(health.activeTasks)")
+
+        if let wd = health.watchdog {
+            Divider().padding(.vertical, 2)
+            SectionHeader("Watchdog")
+            if let level = wd.escalationLevel {
+                InfoRow(label: "  Escalation", value: escalationLabel(level))
+            }
+            if let score = wd.decayScore {
+                InfoRow(label: "  Decay Score", value: String(format: "%.3f", score))
+            }
+            if let rate = wd.obsRatePerHour {
+                InfoRow(label: "  Obs Rate/hr", value: String(format: "%.1f", rate))
+            }
+            if let session = wd.sessionHealthScore {
+                InfoRow(label: "  Session Health", value: String(format: "%.2f", session))
+            }
+            if let anomalies = wd.activeAnomalies, !anomalies.isEmpty {
+                InfoRow(label: "  Anomalies", value: "\(anomalies.count)")
+            }
+        }
+
+        if let orch = health.orchestration {
+            Divider().padding(.vertical, 2)
+            SectionHeader("Orchestration")
+            if let v = orch["microEnabled"]?.value as? Bool {
+                InfoRow(label: "  Micro Enabled", value: v ? "Yes" : "No")
+            }
+            if let v = orch["mesoPeriodSessions"]?.value as? Int {
+                InfoRow(label: "  Meso Period", value: "\(v) sessions")
+            }
+            if let v = orch["cooldownSec"]?.value as? Int {
+                InfoRow(label: "  Cooldown", value: "\(v)s")
+            }
+        }
+
+        if let safety = health.safety {
+            Divider().padding(.vertical, 2)
+            SectionHeader("Safety")
+            if let active = safety.enforcementActive {
+                InfoRow(label: "  Enforcement", value: active ? "Active" : "Inactive")
+            }
+            if let version = safety.safetyVersion {
+                InfoRow(label: "  Version", value: version)
+            }
+            if let rb = safety.rollback {
+                if let w = rb.windowSec {
+                    InfoRow(label: "  Rollback Window", value: "\(w)s")
+                }
+                if let s = rb.snapshotsHeld {
+                    InfoRow(label: "  Snapshots", value: "\(s)")
+                }
+            }
+        }
+
+        if let persist = health.persistence {
+            Divider().padding(.vertical, 2)
+            SectionHeader("Persistence")
+            if let enabled = persist.enabled {
+                InfoRow(label: "  Enabled", value: enabled ? "Yes" : "No")
+            }
+            if let dirty = persist.dirtyKeys {
+                InfoRow(label: "  Dirty Keys", value: "\(dirty)")
+            }
+            if let errors = persist.flushErrors {
+                InfoRow(label: "  Flush Errors", value: "\(errors)")
+            }
+        }
+    }
+
+    // MARK: - Recent Cycles Section
+
+    @ViewBuilder
+    private func recentCyclesSection() -> some View {
+        SectionHeader("Recent Cycles")
+        ForEach(pollingManager.rsicHistory.prefix(5)) { cycle in
+            VStack(alignment: .leading, spacing: 2) {
+                Button(action: {
+                    withAnimation {
+                        expandedCycleId = expandedCycleId == cycle.cycleId ? nil : cycle.cycleId
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: cycleStatusIcon(cycle))
+                            .foregroundColor(cycleStatusColor(cycle))
+                            .font(.caption)
+                        Text(cycle.tier.uppercased())
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.15))
+                            .cornerRadius(3)
+                        if cycle.dryRun == true {
+                            Text("DRY")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundColor(.orange)
+                        }
+                        Spacer()
+                        Text(formatCycleTime(cycle.startedAt))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Image(systemName: expandedCycleId == cycle.cycleId ? "chevron.up" : "chevron.down")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                if expandedCycleId == cycle.cycleId {
+                    cycleDetail(cycle)
+                        .padding(.leading, 16)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func cycleDetail(_ cycle: RSICCycleOutcome) -> some View {
+        InfoRow(label: "Actions", value: "\(cycle.successCount)/\(cycle.actionsExecuted) succeeded")
+        if cycle.failedCount > 0 {
+            InfoRow(label: "Failed", value: "\(cycle.failedCount)")
+        }
+        if let met = cycle.criteriaMet {
+            InfoRow(label: "Criteria Met", value: met ? "Yes" : "No")
+        }
+        if let trigger = cycle.triggerSource {
+            InfoRow(label: "Trigger", value: trigger)
+        }
+        if let err = cycle.error, !err.isEmpty {
+            InfoRow(label: "Error", value: err)
+        }
+
+        // Metrics delta
+        if let before = cycle.metricsBefore, let after = cycle.metricsAfter, !before.isEmpty {
+            SectionHeader("  Metrics")
+            ForEach(before.keys.sorted(), id: \.self) { key in
+                if let b = before[key], let a = after[key] {
+                    let delta = a - b
+                    let arrow = delta > 0 ? "\u{25B2}" : (delta < 0 ? "\u{25BC}" : "=")
+                    InfoRow(
+                        label: "    \(key)",
+                        value: String(format: "%.3f \(arrow) %.3f", b, a)
+                    )
+                }
+            }
+        }
+    }
+
+    // MARK: - Calibration Section
+
+    @ViewBuilder
+    private func calibrationSection() -> some View {
+        SectionHeader("Action Calibration")
+        ForEach(pollingManager.rsicCalibration.sorted(by: { $0.key < $1.key }), id: \.key) { action, confidence in
+            HStack(spacing: 6) {
+                Text(action)
+                    .font(.caption)
+                    .frame(width: 120, alignment: .leading)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                ProgressView(value: min(max(confidence, 0), 1))
+                    .progressViewStyle(.linear)
+                Text(String(format: "%.0f%%", confidence * 100))
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .frame(width: 35, alignment: .trailing)
+            }
+        }
+    }
+
+    // MARK: - Actions Section
+
+    @ViewBuilder
+    private func actionsSection() -> some View {
+        SectionHeader("Actions")
+
+        Picker("Tier", selection: $selectedTier) {
+            Text("Micro").tag("micro")
+            Text("Meso").tag("meso")
+            Text("Macro").tag("macro")
+        }
+        .pickerStyle(.segmented)
+        .controlSize(.small)
+
+        Toggle("Dry Run", isOn: $dryRunToggle)
+            .toggleStyle(.checkbox)
+            .font(.caption)
+            .padding(.top, 2)
+
+        HStack(spacing: 8) {
+            Button("Run Cycle") { showCycleConfirm = true }
+                .controlSize(.small)
+                .disabled(pollingManager.isRSICCycleRunning)
+                .alert("Run RSIC Cycle?", isPresented: $showCycleConfirm) {
+                    Button("Cancel", role: .cancel) {}
+                    Button(dryRunToggle ? "Run (Dry)" : "Run", role: dryRunToggle ? nil : .destructive) {
+                        performCycle()
+                    }
+                } message: {
+                    Text("Trigger a \(selectedTier) RSIC cycle\(dryRunToggle ? " (dry run)" : "") for space \"\(pollingManager.spaceId)\".")
+                }
+
+            Button("Refresh") { pollingManager.pollStats() }
+                .controlSize(.small)
+        }
+        .padding(.top, 4)
+
+        if pollingManager.isRSICCycleRunning {
+            HStack(spacing: 4) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Cycle running...")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.top, 2)
+        }
+
+        if let msg = actionMessage {
+            Text(msg)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .padding(.top, 2)
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func escalationLabel(_ level: Int) -> String {
+        switch level {
+        case 0: return "Nominal"
+        case 1: return "Nudge"
+        case 2: return "Warning"
+        case 3: return "Force"
+        default: return "Level \(level)"
+        }
+    }
+
+    private func cycleStatusIcon(_ cycle: RSICCycleOutcome) -> String {
+        if cycle.dryRun == true { return "eye" }
+        if cycle.failedCount > 0 { return "exclamationmark.triangle" }
+        if cycle.criteriaMet == true { return "checkmark.circle.fill" }
+        return "checkmark.circle"
+    }
+
+    private func cycleStatusColor(_ cycle: RSICCycleOutcome) -> Color {
+        if cycle.dryRun == true { return .orange }
+        if cycle.failedCount > 0 { return .red }
+        if cycle.criteriaMet == true { return .green }
+        return .secondary
+    }
+
+    private func formatCycleTime(_ dateStr: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: dateStr) {
+            return Formatting.timeAgo(from: date)
+        }
+        // Try without fractional seconds
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: dateStr) {
+            return Formatting.timeAgo(from: date)
+        }
+        return dateStr
+    }
+
+    private func performCycle() {
+        Task {
+            do {
+                let result = try await pollingManager.triggerRSICCycle(
+                    tier: selectedTier, dryRun: dryRunToggle
+                )
+                let mode = result.dryRun == true ? " (dry run)" : ""
+                actionMessage = "Cycle complete\(mode): \(result.successCount)/\(result.actionsExecuted) actions"
+            } catch {
+                actionMessage = "Cycle failed: \(error.localizedDescription)"
+            }
+        }
     }
 }
 

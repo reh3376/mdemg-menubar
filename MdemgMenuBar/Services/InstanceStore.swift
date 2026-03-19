@@ -80,8 +80,18 @@ final class InstanceStore: ObservableObject {
                     (instance.projectDirectory as NSString).standardizingPath
                 )
             }
+
+            // Prune instances whose project directory no longer exists on disk.
+            // This prevents phantom entries from cluttering the instance picker.
+            let afterExclusion = loaded.count
+            loaded.removeAll { instance in
+                !FileManager.default.fileExists(atPath: instance.projectDirectory)
+            }
+            if loaded.count < afterExclusion {
+                print("[InstanceStore] Removed \(afterExclusion - loaded.count) instance(s) with missing directories")
+            }
+
             if loaded.count < beforeCount {
-                print("[InstanceStore] Filtered \(beforeCount - loaded.count) excluded instance(s) on load")
                 instances = loaded
                 save() // Persist the cleaned list
                 return
@@ -159,9 +169,14 @@ final class InstanceStore: ObservableObject {
     /// Auto-discovered instances are added to the exclusion list to prevent re-discovery.
     func remove(id: String) {
         if let instance = instances.first(where: { $0.id == id }) {
-            let normalized = (instance.projectDirectory as NSString).standardizingPath
-            excludedDirectories.insert(normalized)
-            saveExcluded()
+            // Only add to exclusion list for auto-discovered instances.
+            // Manual/CLI instances should not pollute the exclusion list —
+            // they can be re-added freely without being blocked.
+            if instance.source == .autoDiscovery {
+                let normalized = (instance.projectDirectory as NSString).standardizingPath
+                excludedDirectories.insert(normalized)
+                saveExcluded()
+            }
         }
         instances.removeAll { $0.id == id }
         if selectedInstanceId == id {
@@ -238,6 +253,16 @@ final class InstanceStore: ObservableObject {
             excludedDirectories = Set(dirs)
         } catch {
             print("[InstanceStore] Failed to load excluded.json: \(error)")
+        }
+
+        // Prune exclusions for directories that no longer exist.
+        let staleExclusions = excludedDirectories.filter { path in
+            !FileManager.default.fileExists(atPath: path)
+        }
+        if !staleExclusions.isEmpty {
+            excludedDirectories.subtract(staleExclusions)
+            saveExcluded()
+            print("[InstanceStore] Pruned \(staleExclusions.count) stale exclusion(s)")
         }
     }
 
