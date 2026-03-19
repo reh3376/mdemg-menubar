@@ -177,7 +177,8 @@ struct StatusView: View {
 
 struct OverviewTab: View {
     @EnvironmentObject var pollingManager: PollingManager
-    @State private var showTeardownConfirm = false
+    @EnvironmentObject var instanceStore: InstanceStore
+    @State private var showRemovalWizard = false
 
     var body: some View {
         let state = pollingManager.serverState
@@ -201,26 +202,18 @@ struct OverviewTab: View {
                     Button("Restart") { pollingManager.restartServer() }
                         .disabled(!state.isRunning)
                     Spacer()
-                    Button("Teardown") {
-                        showTeardownConfirm = true
+                    Button("Remove Instance...") {
+                        showRemovalWizard = true
                     }
                     .foregroundColor(.red)
                 }
                 .controlSize(.small)
-                .confirmationDialog(
-                    "Teardown Instance",
-                    isPresented: $showTeardownConfirm,
-                    titleVisibility: .visible
-                ) {
-                    Button("Teardown", role: .destructive) {
-                        pollingManager.teardownCurrentInstance(export: false, keepData: false)
+                .sheet(isPresented: $showRemovalWizard) {
+                    if let inst = instanceStore.selectedInstance {
+                        TeardownWizardView(instance: inst)
+                            .environmentObject(pollingManager)
+                            .environmentObject(instanceStore)
                     }
-                    Button("Teardown + Export Data", role: .destructive) {
-                        pollingManager.teardownCurrentInstance(export: true, keepData: false)
-                    }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("Permanently remove all MDEMG artifacts for this instance.\nA backup is created before removal.")
                 }
 
                 // Teardown status
@@ -700,6 +693,7 @@ struct ConfigTab: View {
     @State private var showBackupConfirm = false
     @State private var showMigrateConfirm = false
     @State private var showNoConfigAlert = false
+    @State private var showRemovalWizard = false
 
     var body: some View {
         ScrollView {
@@ -799,6 +793,26 @@ struct ConfigTab: View {
                     .controlSize(.small)
                 }
                 .padding(.top, 4)
+
+                Divider().padding(.vertical, 2)
+
+                // Instance Removal
+                SectionHeader("Instance Removal")
+                Text("Completely remove this MDEMG instance, including server, database, hooks, and configuration.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Button("Remove Instance...") {
+                    showRemovalWizard = true
+                }
+                .foregroundColor(.red)
+                .controlSize(.small)
+                .sheet(isPresented: $showRemovalWizard) {
+                    if let inst = pollingManager.instanceStore.selectedInstance {
+                        TeardownWizardView(instance: inst)
+                            .environmentObject(pollingManager)
+                            .environmentObject(pollingManager.instanceStore)
+                    }
+                }
             }
             .padding(12)
         }

@@ -8,10 +8,8 @@ struct InstanceManagerView: View {
     @EnvironmentObject var instanceStore: InstanceStore
     @EnvironmentObject var pollingManager: PollingManager
     @State private var showAddSheet = false
-    @State private var showTeardownConfirm = false
+    @State private var showRemovalWizard = false
     @State private var pendingTeardownInstance: MdemgInstance?
-    @State private var teardownExport = false
-    @State private var teardownKeepData = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -52,9 +50,9 @@ struct InstanceManagerView: View {
                                 instanceStore.remove(id: instance.id)
                             }
                             Divider()
-                            Button("Teardown Instance...", role: .destructive) {
+                            Button("Remove Instance...", role: .destructive) {
                                 pendingTeardownInstance = instance
-                                showTeardownConfirm = true
+                                showRemovalWizard = true
                             }
                         }
                     }
@@ -70,32 +68,12 @@ struct InstanceManagerView: View {
         .sheet(isPresented: $showAddSheet) {
             AddInstanceView(instanceStore: instanceStore)
         }
-        .confirmationDialog(
-            "Teardown Instance",
-            isPresented: $showTeardownConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Teardown", role: .destructive) {
-                if let inst = pendingTeardownInstance {
-                    pollingManager.switchToInstance(inst)
-                    pollingManager.teardownCurrentInstance(
-                        export: false,
-                        keepData: false
-                    )
-                }
+        .sheet(isPresented: $showRemovalWizard) {
+            if let inst = pendingTeardownInstance {
+                TeardownWizardView(instance: inst)
+                    .environmentObject(instanceStore)
+                    .environmentObject(pollingManager)
             }
-            Button("Teardown + Export Data", role: .destructive) {
-                if let inst = pendingTeardownInstance {
-                    pollingManager.switchToInstance(inst)
-                    pollingManager.teardownCurrentInstance(
-                        export: true,
-                        keepData: false
-                    )
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Permanently remove all MDEMG artifacts for \"\(pendingTeardownInstance?.name ?? "")\".\nA backup will be created before removal.")
         }
     }
 }
