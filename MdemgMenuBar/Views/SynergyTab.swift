@@ -109,6 +109,16 @@ struct SynergyTab: View {
 }
 
 #Preview {
-    SynergyTab()
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    let json = """
+    {"jiminy_healthy":true,"claude_md_lines":150,"memory_md_lines":120,"auto_memory_files":3,"auto_memory_lines":45,"overflow_events_24h":2,"synergy_health":0.85,"recovery_buffer_space_entries":0,"recovery_buffer_local_entries":1,"recovery_buffer_total":1,"migration_status":"complete","migration_date":"2026-03-20"}
+    """.data(using: .utf8)!
+    let pm = PollingManager(instanceStore: InstanceStore())
+    pm.serverState.healthStatus = .healthy
+    pm.serverState.isRunning = true
+    pm.synergyStatus = try? decoder.decode(SynergyStatusResponse.self, from: json)
+    return SynergyTab()
+        .environmentObject(pm)
         .frame(width: 395, height: 400)
 }

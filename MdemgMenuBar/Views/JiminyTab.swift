@@ -160,6 +160,25 @@ struct JiminyTab: View {
 }
 
 #Preview {
-    JiminyTab()
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    let healthJSON = """
+    {"status":"ok","enabled":true}
+    """.data(using: .utf8)!
+    let readyJSON = """
+    {"status":"ready","enabled":true,"features":{"synthesis":true,"evaluate_llm":false,"j17":true,"cache":true,"persistence":true,"escalation":false,"outcome_llm":false,"outcome_classifier":false,"ml_tier_prediction":false,"nli_comprehension":false},"services":{"evaluator":"available","sequence_tracker":"available","ticket_manager":"available","protocol_metrics":"available","sidecar":"not_configured"},"config":{"timeout_ms":5000,"max_items":10,"min_confidence":0.3}}
+    """.data(using: .utf8)!
+    let pm = PollingManager(instanceStore: InstanceStore())
+    pm.serverState.healthStatus = .healthy
+    pm.serverState.isRunning = true
+    pm.jiminyHealthData = try? decoder.decode(JiminyHealthResponse.self, from: healthJSON)
+    pm.jiminyReadyData = try? decoder.decode(JiminyReadyResponse.self, from: readyJSON)
+    pm.jiminyTierEffectiveness = JiminyTierEffectivenessData(
+        overallTierComprehension: [0.92, 0.78, 0.65],
+        tierOutcomeCount: [100, 80, 40] as [Int64],
+        message: nil
+    )
+    return JiminyTab()
+        .environmentObject(pm)
         .frame(width: 395, height: 400)
 }
