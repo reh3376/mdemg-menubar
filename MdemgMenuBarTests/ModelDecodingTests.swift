@@ -167,4 +167,91 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(result.stats?.phase, "saturated")
         XCTAssertEqual(result.stats?.edgeCount, 52000)
     }
+
+    // MARK: - Synergy Response Decoding
+
+    func testSynergyStatusResponseDecoding() throws {
+        // Critical: tests the DynamicCodingKey custom decoder for overflow_events_24h.
+        // convertFromSnakeCase turns "overflow_events_24h" → "overflowEvents24H" (capital H),
+        // which the custom decoder must handle via DynamicCodingKey.
+        let json = """
+        {"jiminy_healthy":true,"claude_md_lines":150,"memory_md_lines":120,"auto_memory_files":3,"auto_memory_lines":45,"overflow_events_24h":2,"synergy_health":0.85,"recovery_buffer_space_entries":0,"recovery_buffer_local_entries":1,"recovery_buffer_total":1,"migration_status":"complete","migration_date":"2026-03-20"}
+        """.data(using: .utf8)!
+
+        let result = try decoder.decode(SynergyStatusResponse.self, from: json)
+        XCTAssertTrue(result.jiminyHealthy)
+        XCTAssertEqual(result.claudeMdLines, 150)
+        XCTAssertEqual(result.memoryMdLines, 120)
+        XCTAssertEqual(result.autoMemoryFiles, 3)
+        XCTAssertEqual(result.autoMemoryLines, 45)
+        XCTAssertEqual(result.overflowEvents24h, 2)
+        XCTAssertEqual(result.synergyHealth, 0.85, accuracy: 0.001)
+        XCTAssertEqual(result.recoveryBufferSpaceEntries, 0)
+        XCTAssertEqual(result.recoveryBufferLocalEntries, 1)
+        XCTAssertEqual(result.recoveryBufferTotal, 1)
+        XCTAssertEqual(result.migrationStatus, "complete")
+        XCTAssertEqual(result.migrationDate, "2026-03-20")
+    }
+
+    func testSynergyStatusWrapperDecoding() throws {
+        let json = """
+        {"data":{"jiminy_healthy":false,"claude_md_lines":0,"memory_md_lines":0,"auto_memory_files":0,"auto_memory_lines":0,"overflow_events_24h":0,"synergy_health":0.0,"recovery_buffer_space_entries":0,"recovery_buffer_local_entries":0,"recovery_buffer_total":0,"migration_status":"pending","migration_date":""}}
+        """.data(using: .utf8)!
+
+        let result = try decoder.decode(SynergyStatusWrapper.self, from: json)
+        XCTAssertFalse(result.data.jiminyHealthy)
+        XCTAssertEqual(result.data.migrationStatus, "pending")
+        XCTAssertEqual(result.data.synergyHealth, 0.0, accuracy: 0.001)
+    }
+
+    // MARK: - Jiminy Response Decoding
+
+    func testJiminyHealthResponseDecoding() throws {
+        let json = """
+        {"status":"ok","enabled":true}
+        """.data(using: .utf8)!
+
+        let result = try decoder.decode(JiminyHealthResponse.self, from: json)
+        XCTAssertEqual(result.status, "ok")
+        XCTAssertTrue(result.enabled)
+    }
+
+    func testJiminyHealthResponseDisabledDecoding() throws {
+        let json = """
+        {"status":"disabled","enabled":false}
+        """.data(using: .utf8)!
+
+        let result = try decoder.decode(JiminyHealthResponse.self, from: json)
+        XCTAssertEqual(result.status, "disabled")
+        XCTAssertFalse(result.enabled)
+    }
+
+    func testJiminyReadyResponseFullDecoding() throws {
+        let json = """
+        {"status":"ready","enabled":true,"features":{"synthesis":true,"evaluate_llm":false,"j17":true},"services":{"evaluator":"available","sidecar":"not_configured"},"config":{"timeout_ms":5000,"max_items":10,"min_confidence":0.3},"message":null}
+        """.data(using: .utf8)!
+
+        let result = try decoder.decode(JiminyReadyResponse.self, from: json)
+        XCTAssertEqual(result.status, "ready")
+        XCTAssertTrue(result.enabled)
+        XCTAssertEqual(result.features?["synthesis"], true)
+        XCTAssertEqual(result.features?["j17"], true)
+        XCTAssertEqual(result.features?["evaluate_llm"], false)
+        XCTAssertEqual(result.services?["evaluator"], "available")
+        XCTAssertEqual(result.services?["sidecar"], "not_configured")
+        XCTAssertNotNil(result.config)
+    }
+
+    func testJiminyTierEffectivenessDecoding() throws {
+        let json = """
+        {"data":{"overall_tier_comprehension":[0.92,0.78,0.65],"tier_outcome_count":[100,80,40]}}
+        """.data(using: .utf8)!
+
+        let result = try decoder.decode(JiminyTierEffectivenessWrapper.self, from: json)
+        XCTAssertEqual(result.data.overallTierComprehension?.count, 3)
+        XCTAssertEqual(result.data.overallTierComprehension?[0] ?? 0, 0.92, accuracy: 0.001)
+        XCTAssertEqual(result.data.overallTierComprehension?[1] ?? 0, 0.78, accuracy: 0.001)
+        XCTAssertEqual(result.data.overallTierComprehension?[2] ?? 0, 0.65, accuracy: 0.001)
+        XCTAssertEqual(result.data.tierOutcomeCount, [100, 80, 40])
+    }
 }
