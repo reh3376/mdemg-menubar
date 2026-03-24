@@ -380,6 +380,73 @@ struct PruneResponse: Codable {
     let totalDeleted: Int
 }
 
+// MARK: - Synergy Response Types
+
+struct SynergyStatusWrapper: Codable {
+    let data: SynergyStatusResponse
+}
+
+struct SynergyStatusResponse: Codable {
+    let jiminyHealthy: Bool
+    let claudeMdLines: Int
+    let memoryMdLines: Int
+    let autoMemoryFiles: Int
+    let autoMemoryLines: Int
+    let overflowEvents24h: Int
+    let synergyHealth: Double
+    let recoveryBufferSpaceEntries: Int
+    let recoveryBufferLocalEntries: Int
+    let recoveryBufferTotal: Int
+    let migrationStatus: String
+    let migrationDate: String
+
+    // Custom decoder: convertFromSnakeCase turns "overflow_events_24h" → "overflowEvents24H"
+    // (capital H) due to digit→letter word boundary detection in .capitalized.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DynamicCodingKey.self)
+        jiminyHealthy = try container.decode(Bool.self, forKey: .init("jiminyHealthy"))
+        claudeMdLines = try container.decode(Int.self, forKey: .init("claudeMdLines"))
+        memoryMdLines = try container.decode(Int.self, forKey: .init("memoryMdLines"))
+        autoMemoryFiles = try container.decode(Int.self, forKey: .init("autoMemoryFiles"))
+        autoMemoryLines = try container.decode(Int.self, forKey: .init("autoMemoryLines"))
+        overflowEvents24h = try container.decode(Int.self, forKey: .init("overflowEvents24H"))
+        synergyHealth = try container.decode(Double.self, forKey: .init("synergyHealth"))
+        recoveryBufferSpaceEntries = try container.decode(Int.self, forKey: .init("recoveryBufferSpaceEntries"))
+        recoveryBufferLocalEntries = try container.decode(Int.self, forKey: .init("recoveryBufferLocalEntries"))
+        recoveryBufferTotal = try container.decode(Int.self, forKey: .init("recoveryBufferTotal"))
+        migrationStatus = try container.decode(String.self, forKey: .init("migrationStatus"))
+        migrationDate = try container.decode(String.self, forKey: .init("migrationDate"))
+    }
+}
+
+// MARK: - Jiminy Response Types
+
+struct JiminyHealthResponse: Codable {
+    let status: String   // "ok" or "disabled"
+    let enabled: Bool
+}
+
+struct JiminyReadyResponse: Codable {
+    let status: String   // "ready" or "disabled"
+    let enabled: Bool
+    let features: [String: Bool]?
+    let services: [String: String]?
+    let config: [String: AnyCodable]?
+    let stats: [String: AnyCodable]?
+    let protocolMetrics: [String: AnyCodable]?
+    let message: String?
+}
+
+struct JiminyTierEffectivenessWrapper: Codable {
+    let data: JiminyTierEffectivenessData
+}
+
+struct JiminyTierEffectivenessData: Codable {
+    let overallTierComprehension: [Double]?
+    let tierOutcomeCount: [Int64]?
+    let message: String?
+}
+
 struct TeardownChange: Codable {
     let path: String
     let action: String
@@ -676,6 +743,56 @@ final class MdemgClient {
         try await post("/v1/learning/prune", body: [
             "space_id": spaceId,
         ])
+    }
+
+    // MARK: - Synergy
+
+    /// GET /v1/synergy/status?space_id=X -- synergy health, file metrics, recovery buffer.
+    func synergyStatus(spaceId: String) async throws -> SynergyStatusResponse {
+        let wrapper: SynergyStatusWrapper = try await get("/v1/synergy/status",
+            queryItems: [URLQueryItem(name: "space_id", value: spaceId)])
+        return wrapper.data
+    }
+
+    // MARK: - Jiminy
+
+    /// GET /v1/jiminy/healthz -- Jiminy health status. Returns 200 when enabled, 503 when disabled.
+    /// Both responses are parseable as JiminyHealthResponse.
+    func jiminyHealth() async -> JiminyHealthResponse {
+        do {
+            return try await get("/v1/jiminy/healthz")
+        } catch MdemgClientError.httpError(let code, let body) where code == 503 {
+            // 503 = disabled, parse the body
+            if let data = body.data(using: .utf8),
+               let decoded = try? JSONDecoder().decode(JiminyHealthResponse.self, from: data) {
+                return decoded
+            }
+            return JiminyHealthResponse(status: "disabled", enabled: false)
+        } catch {
+            return JiminyHealthResponse(status: "error", enabled: false)
+        }
+    }
+
+    /// GET /v1/jiminy/ready?stats=true -- Jiminy readiness with features, services, stats.
+    func jiminyReady() async -> JiminyReadyResponse? {
+        do {
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try await get("/v1/jiminy/ready",
+                queryItems: [URLQueryItem(name: "stats", value: "true")])
+        } catch {
+            return nil
+        }
+    }
+
+    /// GET /v1/jiminy/protocol/tier-effectiveness -- tier comprehension scores.
+    func jiminyTierEffectiveness() async -> JiminyTierEffectivenessData? {
+        do {
+            let wrapper: JiminyTierEffectivenessWrapper = try await get("/v1/jiminy/protocol/tier-effectiveness")
+            return wrapper.data
+        } catch {
+            return nil
+        }
     }
 
     // MARK: - Generic GET Helper

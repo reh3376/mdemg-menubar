@@ -91,6 +91,16 @@ final class PollingManager: ObservableObject {
     @Published var isRSICCycleRunning: Bool = false
     @Published var rsicActionMessage: String?
 
+    // MARK: - Synergy State
+
+    @Published var synergyStatus: SynergyStatusResponse?
+
+    // MARK: - Jiminy State
+
+    @Published var jiminyHealthData: JiminyHealthResponse?
+    @Published var jiminyReadyData: JiminyReadyResponse?
+    @Published var jiminyTierEffectiveness: JiminyTierEffectivenessData?
+
     // MARK: - Multi-Instance State
 
     /// Health state for all registered instances, keyed by instance ID.
@@ -202,6 +212,10 @@ final class PollingManager: ObservableObject {
         rsicHistory = []
         rsicCalibration = [:]
         rsicActionMessage = nil
+        synergyStatus = nil
+        jiminyHealthData = nil
+        jiminyReadyData = nil
+        jiminyTierEffectiveness = nil
 
         // Reset backoff and poll immediately
         consecutiveFailures = 0
@@ -567,6 +581,14 @@ final class PollingManager: ObservableObject {
 
             // Fetch RSIC calibration
             do { rsicCalibration = try await client.rsicCalibration().calibration } catch {}
+
+            // Fetch synergy status
+            do { synergyStatus = try await client.synergyStatus(spaceId: spaceId) } catch {}
+
+            // Fetch Jiminy health, readiness, and tier effectiveness
+            jiminyHealthData = await client.jiminyHealth()
+            jiminyReadyData = await client.jiminyReady()
+            jiminyTierEffectiveness = await client.jiminyTierEffectiveness()
 
             // Fetch config on every stats poll (values may change across instances)
             fetchConfig()

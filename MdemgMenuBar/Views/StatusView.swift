@@ -87,6 +87,16 @@ struct StatusView: View {
                     .environmentObject(pollingManager)
                     .tabItem { Label("RSIC", systemImage: "arrow.triangle.2.circlepath") }
                     .tag(6)
+
+                SynergyTab()
+                    .environmentObject(pollingManager)
+                    .tabItem { Label("Synergy", systemImage: "link.circle") }
+                    .tag(7)
+
+                JiminyTab()
+                    .environmentObject(pollingManager)
+                    .tabItem { Label("Jiminy", systemImage: "ant") }
+                    .tag(8)
             }
 
             // Footer timestamp
